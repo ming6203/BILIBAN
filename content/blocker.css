@@ -1,0 +1,144 @@
+.biliban-no-wrap { display: inline-flex !important; align-items: center !important; gap: 4px !important; flex-wrap: nowrap !important; white-space: nowrap !important; }
+/* ==================== 屏蔽按钮 ==================== */
+.biliban-block-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border: 1px solid #ddd;
+  border-radius: 3px;
+  background: #fafafa;
+  color: #999;
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+  vertical-align: middle;
+  line-height: 1.2;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.biliban-block-btn:hover {
+  background: #ff4d4f;
+  color: white;
+  border-color: #ff4d4f;
+}
+
+/* ==================== 屏蔽后的评论 ==================== */
+.biliban-comment-blocked {
+  position: relative;
+  background: #f9f9f9;
+  border: 1px dashed #e0e0e0;
+  border-radius: 4px;
+  margin: 4px 0;
+}
+
+.biliban-blocked-notice {
+  padding: 8px 12px;
+  color: #bbb;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.biliban-blocked-notice .biliban-expand-btn {
+  color: #fb7299;
+  cursor: pointer;
+  font-size: 12px;
+  border: none;
+  background: none;
+  padding: 0;
+}
+
+.biliban-blocked-notice .biliban-expand-btn:hover {
+  text-decoration: underline;
+}
+
+/* ==================== 选组弹窗 ==================== */
+.biliban-group-picker {
+  position: fixed;
+  z-index: 99999;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+  padding: 8px;
+  min-width: 180px;
+  font-size: 13px;
+}
+
+.biliban-group-picker .biliban-picker-title {
+  padding: 4px 8px;
+  font-weight: 600;
+  color: #333;
+  border-bottom: 1px solid #eee;
+  margin-bottom: 4px;
+}
+
+.biliban-group-picker .biliban-picker-item {
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: background 0.1s;
+}
+
+.biliban-group-picker .biliban-picker-item:hover {
+  background: #fff0f3;
+  color: #fb7299;
+}
+
+.biliban-group-picker .biliban-picker-item.disabled {
+  color: #ccc;
+  cursor: not-allowed;
+}
+
+.biliban-group-picker .biliban-picker-new {
+  border-top: 1px solid #eee;
+  margin-top: 4px;
+  padding-top: 4px;
+  color: #fb7299;
+}
+
+/* ==================== dark mode ==================== */
+body.dark .biliban-block-btn,
+.dark .biliban-block-btn {
+  background: #3a3a3a;
+  color: #bbb;
+  border-color: #555;
+}
+body.dark .biliban-block-btn:hover,
+.dark .biliban-block-btn:hover {
+  background: #ff4d4f;
+  color: white;
+  border-color: #ff4d4f;
+}
+body.dark .biliban-group-picker,
+.dark .biliban-group-picker {
+  background: #2a2a2a;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+}
+body.dark .biliban-picker-title,
+.dark .biliban-picker-title {
+  color: #eee;
+  border-bottom-color: #444;
+}
+body.dark .biliban-picker-item,
+.dark .biliban-picker-item {
+  color: #ccc;
+}
+body.dark .biliban-picker-item:hover,
+.dark .biliban-picker-item:hover {
+  background: #3a3a3a;
+  color: #fb7299;
+}
+body.dark .biliban-picker-item.disabled,
+.dark .biliban-picker-item.disabled {
+  color: #666;
+}
+body.dark .biliban-picker-new,
+.dark .biliban-picker-new {
+  border-top-color: #444;
+  color: #fb7299;
+}

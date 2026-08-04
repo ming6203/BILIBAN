@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BILIBAN - B站用户屏蔽</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="app">
+    <!-- 顶部标题栏 -->
+    <header class="header">
+      <div class="logo">
+        <span class="logo-icon">🚫</span>
+        <span class="logo-text">BILIBAN</span>
+      </div>
+      <div class="header-actions">
+        <button id="btn-import" class="icon-btn" title="导入本地文件">📥</button>
+        <button id="btn-export" class="icon-btn" title="导出本地文件">📤</button>
+        <button id="btn-power" class="icon-btn" title="强力屏蔽模式">🛡️</button>
+        <button id="btn-github" class="icon-btn" title="GitHub 云端同步">☁️</button>
+      </div>
+    </header>
+
+    <!-- GitHub 同步面板 -->
+    <div class="github-panel" id="github-panel" style="display:none">
+      <div class="github-panel-header">
+        <span class="github-title">☁️ 云端 & 订阅</span>
+        <button id="github-close" class="icon-btn-sm">✕</button>
+      </div>
+
+      <!-- Tab 切换 -->
+      <div class="github-tabs">
+        <button class="github-tab active" data-tab="sync">云端备份</button>
+        <button class="github-tab" data-tab="subscribe">社区订阅</button>
+      </div>
+
+      <!-- Tab: 云端备份 -->
+      <div class="github-tab-content" id="tab-sync">
+        <div class="github-section" id="github-token-section">
+          <label class="github-label">GitHub Token</label>
+          <div class="github-input-row">
+            <input type="password" id="github-token-input" placeholder="ghp_xxxx 或 github_pat_xxxx" class="github-input">
+            <button id="github-token-save" class="primary-btn-sm">验证</button>
+          </div>
+          <div class="github-hint" id="github-token-status"></div>
+          <div class="github-hint">需要 <code>repo</code> 权限，在 <a href="https://github.com/settings/tokens/new?scopes=repo&description=BILIBAN" target="_blank">GitHub Settings</a> 创建</div>
+        </div>
+        <div class="github-section" id="github-sync-section" style="display:none">
+          <div class="github-user" id="github-user-info"></div>
+          <div class="github-actions">
+            <button id="github-push" class="github-action-btn push">
+              <span class="btn-icon">⬆️</span><span>推送到云端</span>
+            </button>
+            <button id="github-pull" class="github-action-btn pull">
+              <span class="btn-icon">⬇️</span><span>从云端恢复</span>
+            </button>
+          </div>
+          <div class="github-hint" id="github-sync-status"></div>
+          <div class="github-link" id="github-link" style="display:none">
+            <a href="#" target="_blank" id="github-link-url">查看云端备份</a>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab: 社区订阅 -->
+      <div class="github-tab-content" id="tab-subscribe" style="display:none">
+        <div class="github-section">
+          <label class="github-label">添加订阅源</label>
+          <div class="github-input-row">
+            <input type="text" id="source-input" placeholder="owner/repo 或完整 URL" class="github-input">
+            <button id="source-add" class="primary-btn-sm">添加</button>
+          </div>
+          <div class="github-hint">支持格式：<code>owner/repo</code>、<code>owner/repo/path.json</code>、完整 GitHub URL</div>
+          <div class="github-hint" id="source-add-status"></div>
+        </div>
+        <div class="github-section">
+          <div class="source-actions-row">
+            <button id="source-pull-all" class="github-action-btn pull" style="flex:1">
+              <span class="btn-icon">🔄</span><span>从全部源拉取合并</span>
+            </button>
+          </div>
+          <div class="github-hint" id="source-pull-status"></div>
+        </div>
+        <div class="github-section">
+          <label class="github-label">已订阅 (<span id="source-count">0</span>)</label>
+          <div class="source-list" id="source-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 添加用户区域 -->
+    <div class="add-section">
+      <div class="input-row">
+        <input type="text" id="input-uid" placeholder="输入 UID" inputmode="numeric">
+        <select id="select-group"></select>
+        <button id="btn-add" class="primary-btn">添加</button>
+      </div>
+      <div class="error-msg" id="error-msg"></div>
+    </div>
+
+    <!-- 分组列表 -->
+    <div class="groups-container" id="groups-container">
+      <div class="empty-state" id="empty-state">
+        <div class="empty-icon">📋</div>
+        <div class="empty-text">还没有屏蔽分组<br>点击下方按钮创建第一个分组</div>
+      </div>
+    </div>
+
+    <!-- 底部操作栏 -->
+    <footer class="footer">
+      <button id="btn-add-group" class="secondary-btn">+ 新建分组</button>
+      <div class="stats" id="stats"></div>
+    </footer>
+  </div>
+
+  <!-- 隐藏的文件导入 -->
+  <input type="file" id="file-import" accept=".json" style="display:none">
+
+  <!-- 确认对话框 -->
+  <div class="modal-overlay" id="modal-overlay" style="display:none">
+    <div class="modal">
+      <div class="modal-title" id="modal-title"></div>
+      <div class="modal-body" id="modal-body"></div>
+      <div class="modal-actions">
+        <button class="secondary-btn" id="modal-cancel">取消</button>
+        <button class="danger-btn" id="modal-confirm">确认</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="../lib/storage.js"></script>
+  <script src="../lib/github.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
