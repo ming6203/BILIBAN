@@ -177,9 +177,10 @@ btnAdd.addEventListener('click', async () => {
   const groupId = selectGroup.value;
   if (!uid || isNaN(uid) || uid <= 0) { showError('请输入有效的 UID（纯数字）'); return; }
   if (!groupId) { showError('请先选择或创建一个分组'); return; }
-  const added = await BilibanStorage.addUidToGroup(groupId, uid);
-  if (added) { inputUid.value = ''; render(); }
-  else { showError('该用户已在此分组中'); }
+  const result = await BilibanStorage.addUidToGroup(groupId, uid);
+  if (result.ok) { inputUid.value = ''; render(); }
+  else if (result.reason === 'duplicate') { showError('该用户已在「' + (result.groupName || '该分组') + '」中'); }
+  else { showError('添加失败，请重试'); }
 });
 inputUid.addEventListener('keydown', (e) => { if (e.key === 'Enter') btnAdd.click(); });
 

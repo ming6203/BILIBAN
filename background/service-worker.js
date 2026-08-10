@@ -16,13 +16,32 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 
 // 安装时初始化
-chrome.runtime.onInstalled.addListener(() => {
-  console.log('[BILIBAN] 插件已安装');
+chrome.runtime.onInstalled.addListener((details) => {
+  console.log('[BILIBAN] 插件已安装/更新', details.reason);
   chrome.storage.local.get('biliban_blacklist', (result) => {
     if (!result.biliban_blacklist) {
       chrome.storage.local.set({
         biliban_blacklist: { groups: [] }
       });
+      return;
+    }
+    // 安装/更新时自动清理分组内重复 UID，并将所有 UID 规范化为 Number
+    const data = result.biliban_blacklist;
+    let cleaned = 0;
+    for (const group of (data.groups || [])) {
+      const seen = new Set();
+      const unique = [];
+      for (const uid of group.uids) {
+        const uidNum = Number(uid);
+        if (isNaN(uidNum) || seen.has(uidNum)) { cleaned++; continue; }
+        seen.add(uidNum);
+        unique.push(uidNum);
+      }
+      group.uids = unique;
+    }
+    if (cleaned > 0) {
+      chrome.storage.local.set({ biliban_blacklist: data });
+      console.log('[BILIBAN] 自动去重：清理 ' + cleaned + ' 个重复/无效 UID');
     }
   });
 });

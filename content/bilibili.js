@@ -478,7 +478,7 @@
         html += '<div class="biliban-picker-item disabled">暂无分组，请先在插件面板创建</div>';
       } else {
         groups.forEach(group => {
-          const alreadyIn = group.uids.includes(uid);
+          const alreadyIn = group.uids.includes(Number(uid));
           html += '<div class="biliban-picker-item ' + (alreadyIn ? 'disabled' : '') +
             '" data-group-id="' + group.id + '" data-uid="' + uid + '">' +
             (alreadyIn ? '✓ ' : '') + group.name + '</div>';
@@ -496,7 +496,13 @@
 
       picker.querySelectorAll('.biliban-picker-item:not(.disabled):not(.biliban-picker-new)').forEach(item => {
         item.addEventListener('click', async () => {
-          await BilibanStorage.addUidToGroup(item.dataset.groupId, Number(item.dataset.uid));
+          const result = await BilibanStorage.addUidToGroup(item.dataset.groupId, Number(item.dataset.uid));
+          if (!result.ok) {
+            if (result.reason === 'duplicate') {
+              showContentToast('该用户已在「' + (result.groupName || '该分组') + '」中', 'warn');
+            }
+            return;
+          }
           picker.remove();
           blockedUids = await BilibanStorage.getBlockedUids();
           syncUidsToInterceptor();
@@ -510,7 +516,13 @@
         const name = prompt('输入新分组名称：');
         if (name && name.trim()) {
           const group = await BilibanStorage.addGroup(name.trim());
-          await BilibanStorage.addUidToGroup(group.id, uid);
+          const result = await BilibanStorage.addUidToGroup(group.id, uid);
+          if (!result.ok) {
+            if (result.reason === 'duplicate') {
+              showContentToast('该用户已在「' + (result.groupName || '该分组') + '」中', 'warn');
+            }
+            return;
+          }
           picker.remove();
           blockedUids = await BilibanStorage.getBlockedUids();
           syncUidsToInterceptor();
@@ -601,7 +613,7 @@
         html += '<div class="biliban-picker-item disabled">暂无分组，请先在插件面板创建</div>';
       } else {
         groups.forEach(group => {
-          const alreadyIn = group.uids.includes(uid);
+          const alreadyIn = group.uids.includes(Number(uid));
           html += '<div class="biliban-picker-item ' + (alreadyIn ? 'disabled' : '') + '" data-group-id="' + group.id + '" data-uid="' + uid + '">' + (alreadyIn ? '\u2713 ' : '') + group.name + '</div>';
         });
       }
@@ -615,7 +627,13 @@
       document.body.appendChild(picker);
       picker.querySelectorAll('.biliban-picker-item:not(.disabled):not(.biliban-picker-new)').forEach(item => {
         item.addEventListener('click', async () => {
-          await BilibanStorage.addUidToGroup(item.dataset.groupId, Number(item.dataset.uid));
+          const result = await BilibanStorage.addUidToGroup(item.dataset.groupId, Number(item.dataset.uid));
+          if (!result.ok) {
+            if (result.reason === 'duplicate') {
+              showContentToast('该用户已在「' + (result.groupName || '该分组') + '」中', 'warn');
+            }
+            return;
+          }
           picker.remove();
           blockedUids = await BilibanStorage.getBlockedUids();
           syncUidsToInterceptor();
@@ -627,7 +645,13 @@
         const name = prompt('输入新分组名称：');
         if (name && name.trim()) {
           const group = await BilibanStorage.addGroup(name.trim());
-          await BilibanStorage.addUidToGroup(group.id, uid);
+          const result = await BilibanStorage.addUidToGroup(group.id, uid);
+          if (!result.ok) {
+            if (result.reason === 'duplicate') {
+              showContentToast('该用户已在「' + (result.groupName || '该分组') + '」中', 'warn');
+            }
+            return;
+          }
           picker.remove();
           blockedUids = await BilibanStorage.getBlockedUids();
           syncUidsToInterceptor();
@@ -779,6 +803,34 @@
     alert.style.opacity = '0';
     alert.style.transform = 'translateX(-50%) translateY(-20px)';
     setTimeout(function() { if (alert.parentNode) alert.remove(); }, 300);
+  }
+
+  /**
+   * 页面内浮动提示（轻量 toast）
+   * @param {string} msg - 提示文本
+   * @param {string} type - 'info' | 'warn' | 'error'
+   */
+  function showContentToast(msg, type) {
+    document.querySelectorAll('.biliban-content-toast').forEach(t => t.remove());
+    const toast = document.createElement('div');
+    toast.className = 'biliban-content-toast';
+    const bg = type === 'error' ? '#ff4d4f' : type === 'warn' ? '#faad14' : '#00a1d6';
+    toast.style.cssText =
+      'position:fixed;top:20px;left:50%;transform:translateX(-50%);' +
+      'background:' + bg + ';color:#fff;padding:10px 20px;border-radius:8px;' +
+      'font-size:14px;z-index:999999;box-shadow:0 4px 12px rgba(0,0,0,0.3);' +
+      'opacity:0;transition:opacity 0.3s,transform 0.3s;pointer-events:none;max-width:90vw;';
+    toast.textContent = msg;
+    document.body.appendChild(toast);
+    requestAnimationFrame(function() {
+      toast.style.opacity = '1';
+      toast.style.transform = 'translateX(-50%) translateY(0)';
+    });
+    setTimeout(function() {
+      toast.style.opacity = '0';
+      toast.style.transform = 'translateX(-50%) translateY(-10px)';
+      setTimeout(function() { if (toast.parentNode) toast.remove(); }, 300);
+    }, 2500);
   }
 
   function escapeHtml(str) {
