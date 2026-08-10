@@ -43,7 +43,7 @@
     console.log('[BILIBAN] v14 已加载 ' + blockedUids.size + ' 个屏蔽 UID');
     syncUidsToInterceptor();
 
-    new MutationObserver(() => scanAll()).observe(document.body, {
+    new MutationObserver(() => { scanAll(); checkSpaceBlacklist(); }).observe(document.body, {
       childList: true, subtree: true
     });
 
@@ -53,6 +53,12 @@
     scanAll();
     setTimeout(scanAll, 500);
     setTimeout(scanAll, 1500);
+
+    // 空间主页黑名单检测：立即检测 + 延迟检测（等待 SPA 渲染）
+    checkSpaceBlacklist();
+    setTimeout(checkSpaceBlacklist, 1000);
+    setTimeout(checkSpaceBlacklist, 3000);
+    setInterval(checkSpaceBlacklist, 2000);
 
     // Power mode: check saved state and listen for changes
     chrome.storage.local.get('biliban_power_mode', function(result) {
@@ -144,6 +150,7 @@
       processComments();
       processVideoCards();
       processBewlyCards();
+      processSpacePage();
     });
   }
 
@@ -635,12 +642,218 @@
     });
   }
 
+  // ==================== 空间主页黑名单检测 ====================
+
+  let _lastCheckedSpaceUid = null;
+
+  /**
+   * 从 URL 提取空间页 UID
+   * 支持 /521281162、/521281162/video、/521281162/dynamic 等格式
+   */
+  function getSpaceUidFromUrl() {
+    // pathname 形如 /521281162 或 /521281162/dynamic
+    const m = window.location.pathname.match(/^\/(\d+)/);
+    if (m) return Number(m[1]);
+    // 兜底：完整 URL 匹配
+    const fullMatch = window.location.href.match(/space\.bilibili\.com\/(\d+)/);
+    if (fullMatch) return Number(fullMatch[1]);
+    return null;
+  }
+
+  /**
+   * 从 DOM 提取空间页 UID（作为 URL 的验证/兜底）
+   * 目标元素结构：
+   * <div class="info-section__content">
+   *   <div class="info-item">
+   *     <i class="vui_icon sic-fsp-uid_line icon"></i>
+   *     <div class="vui_ellipsis multi-mode">521281162</div>
+   *   </div>
+   * </div>
+   */
+  function getSpaceUidFromDom() {
+    // 策略1：通过 UID 图标定位
+    const uidIcon = document.querySelector('.sic-fsp-uid_line');
+    if (uidIcon) {
+      const infoItem = uidIcon.closest('.info-item');
+      if (infoItem) {
+        const uidEl = infoItem.querySelector('.vui_ellipsis') || infoItem.querySelector('[class*="vui_ellipsis"]');
+        if (uidEl) {
+          const text = uidEl.textContent.trim();
+          if (/^\d+$/.test(text)) return Number(text);
+        }
+      }
+    }
+
+    // 策略2：遍历 info-section__content 下的 info-item，找纯数字内容
+    const infoItems = document.querySelectorAll('.info-section__content .info-item');
+    for (const item of infoItems) {
+      const uidEl = item.querySelector('.vui_ellipsis') || item.querySelector('[class*="vui_ellipsis"]');
+      if (uidEl) {
+        const text = uidEl.textContent.trim();
+        if (/^\d+$/.test(text)) return Number(text);
+      }
+    }
+
+    // 策略3：暴力搜索所有 .info-item
+    const allInfoItems = document.querySelectorAll('.info-item');
+    for (const item of allInfoItems) {
+      const text = item.textContent.trim();
+      if (/^\d{5,12}$/.test(text)) return Number(text);
+    }
+
+    return null;
+  }
+
+  /**
+   * 检测当前是否在用户空间主页，若是则检查黑名单
+   */
+  function checkSpaceBlacklist() {
+    // 仅在 space.bilibili.com 上运行
+    if (!window.location.hostname.includes('space.bilibili.com')) return;
+
+    // 从 URL 提取 UID（主要方式）
+    let uid = getSpaceUidFromUrl();
+
+    // URL 提取失败时，从 DOM 提取（兜底）
+    if (!uid) {
+      uid = getSpaceUidFromDom();
+    }
+
+    if (!uid) return;
+
+    // 已检测过此 UID，不重复弹窗
+    if (_lastCheckedSpaceUid === uid) return;
+    _lastCheckedSpaceUid = uid;
+
+    // 移除旧提醒
+    document.querySelectorAll('.biliban-space-alert').forEach(el => el.remove());
+
+    // 异步查询黑名单分组
+    BilibanStorage.findGroupsByUid(uid).then(matchedGroups => {
+      // 查询期间 UID 可能已变化
+      if (_lastCheckedSpaceUid !== uid) return;
+      if (matchedGroups.length === 0) return;
+      showSpaceBlacklistAlert(uid, matchedGroups);
+    });
+  }
+
+  /**
+   * 显示黑名单提醒弹窗
+   */
+  function showSpaceBlacklistAlert(uid, groups) {
+    const groupTexts = groups.map(g =>
+      g.name + (g.enabled ? '' : '（已禁用）')
+    );
+
+    const alert = document.createElement('div');
+    alert.className = 'biliban-space-alert';
+
+    const groupList = groupTexts.map(name =>
+      '<span class="biliban-space-alert-tag">' + escapeHtml(name) + '</span>'
+    ).join('');
+
+    alert.innerHTML =
+      '<div class="biliban-space-alert-icon">🚫</div>' +
+      '<div class="biliban-space-alert-content">' +
+        '<div class="biliban-space-alert-title">该用户已在黑名单中</div>' +
+        '<div class="biliban-space-alert-detail">UID: ' + uid + '</div>' +
+        '<div class="biliban-space-alert-groups">' + groupList + '</div>' +
+      '</div>' +
+      '<button class="biliban-space-alert-close" title="关闭">×</button>';
+
+    document.body.appendChild(alert);
+
+    // 关闭按钮
+    alert.querySelector('.biliban-space-alert-close').addEventListener('click', function() {
+      removeAlert(alert);
+    });
+
+    // 10 秒后自动消失
+    setTimeout(function() {
+      removeAlert(alert);
+    }, 10000);
+  }
+
+  function removeAlert(alert) {
+    if (!alert || !alert.parentNode) return;
+    alert.style.opacity = '0';
+    alert.style.transform = 'translateX(-50%) translateY(-20px)';
+    setTimeout(function() { if (alert.parentNode) alert.remove(); }, 300);
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  /**
+   * 空间主页：在用户名旁注入屏蔽按钮
+   * 目标结构：
+   * <div class="upinfo-detail__top">
+   *   <div class="nickname">于凉</div>
+   *   <a class="level">...</a>
+   * </div>
+   */
+  function processSpacePage() {
+    // 仅在 space.bilibili.com 上运行
+    if (!window.location.hostname.includes('space.bilibili.com')) return;
+
+    const nicknameEl = document.querySelector('.upinfo-detail__top .nickname');
+    if (!nicknameEl) return;
+
+    const topContainer = nicknameEl.closest('.upinfo-detail__top');
+    if (!topContainer) return;
+
+    // 获取 UID（URL 优先，DOM 兜底）
+    const uid = getSpaceUidFromUrl() || getSpaceUidFromDom();
+    if (!uid) return;
+
+    const isBlocked = blockedUids.has(uid);
+    const expectedText = isBlocked ? '已拉黑' : '屏蔽';
+
+    // 已有按钮：检查 UID 是否一致，不一致则重建
+    const existingBtn = topContainer.querySelector('.biliban-block-btn');
+    if (existingBtn) {
+      if (existingBtn._bibanUid === uid) {
+        // 同一 UID，仅同步屏蔽状态
+        if (existingBtn.textContent !== expectedText) {
+          existingBtn.textContent = expectedText;
+          existingBtn.classList.toggle('biliban-blocked', isBlocked);
+        }
+        return;
+      }
+      // UID 变了（SPA 导航到另一个用户），移除旧按钮
+      existingBtn.remove();
+    }
+
+    // 创建按钮
+    const btn = document.createElement('button');
+    btn.className = 'biliban-block-btn biliban-space-block-btn' + (isBlocked ? ' biliban-blocked' : '');
+    btn.textContent = expectedText;
+    btn.title = '屏蔽用户 ' + uid;
+    btn._bibanUid = uid;
+    btn.addEventListener('click', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      showGroupPicker(btn, uid);
+    });
+
+    // 插入到昵称后面
+    nicknameEl.after(btn);
+  }
+
+
   // ==================== 刷新 ====================
 
   async function refreshAll() {
     blockedUids = await BilibanStorage.getBlockedUids();
     console.log('[BILIBAN] 刷新完成，当前 ' + blockedUids.size + ' 个 UID');
     syncUidsToInterceptor();
+
+    // 重置空间检测状态，让黑名单变更后重新检查
+    _lastCheckedSpaceUid = null;
+    checkSpaceBlacklist();
 
     document.querySelectorAll('[data-' + DONE + ']').forEach(el => delete el.dataset[DONE]);
 
