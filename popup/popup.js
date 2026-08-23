@@ -32,6 +32,11 @@ const githubSyncStatus = document.getElementById('github-sync-status');
 const githubLink = document.getElementById('github-link');
 const githubLinkUrl = document.getElementById('github-link-url');
 
+// 仓库可见性
+const visPrivate = document.getElementById('vis-private');
+const visPublic = document.getElementById('vis-public');
+const visibilityStatus = document.getElementById('visibility-status');
+
 // 分块相关
 const btnAddChunk = document.getElementById('btn-add-chunk');
 const chunkList = document.getElementById('chunk-list');
@@ -788,6 +793,9 @@ async function checkGithubToken() {
     
     // 渲染分块列表
     await renderChunks();
+
+    // 初始化仓库可见性状态
+    await initVisibilityUI();
     
     const status = await BilibanGithubSync.getSyncStatus();
     if (status.synced) {
@@ -808,6 +816,47 @@ async function checkGithubToken() {
   }
 }
 githubTokenSave.addEventListener('click', checkGithubToken);
+
+// 仓库可见性切换
+async function initVisibilityUI() {
+  const isPrivate = await BilibanGithubSync.getRepoVisibilityPref();
+  updateVisibilityButtons(isPrivate);
+}
+
+function updateVisibilityButtons(isPrivate) {
+  visPrivate.classList.toggle('active', isPrivate);
+  visPublic.classList.toggle('active', !isPrivate);
+  visPrivate.disabled = isPrivate;
+  visPublic.disabled = !isPrivate;
+}
+
+async function applyVisibility(isPrivate) {
+  // 保存偏好（立即生效）
+  await BilibanGithubSync.setRepoVisibilityPref(isPrivate);
+  updateVisibilityButtons(isPrivate);
+
+  const label = isPrivate ? '私有' : '公共';
+  visibilityStatus.textContent = '正在切换仓库为' + label + '...';
+  visibilityStatus.className = 'github-hint github-status-loading';
+
+  try {
+    const result = await BilibanGithubSync.syncRepoVisibility();
+    if (result.created === false) {
+      visibilityStatus.textContent = '✓ 偏好已保存：推送时将创建' + label + '仓库';
+      visibilityStatus.className = 'github-hint github-status-ok';
+    } else {
+      visibilityStatus.textContent = '✓ 仓库已切换为' + label +
+        (result.changed ? '' : '（本来就是' + label + '）');
+      visibilityStatus.className = 'github-hint github-status-ok';
+    }
+  } catch (e) {
+    visibilityStatus.textContent = '✗ 切换失败: ' + e.message + '（将在下次推送时重试）';
+    visibilityStatus.className = 'github-hint github-status-err';
+  }
+}
+
+visPrivate.addEventListener('click', () => applyVisibility(true));
+visPublic.addEventListener('click', () => applyVisibility(false));
 
 // 推送全部
 githubPush.addEventListener('click', async () => {

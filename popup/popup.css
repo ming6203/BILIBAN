@@ -120,6 +120,30 @@ body {
   padding: 6px 8px; background: #404040; border-radius: 6px;
 }
 
+/* ==================== 仓库可见性切换 ==================== */
+.visibility-toggle {
+  display: flex; gap: 6px; margin-bottom: 6px;
+}
+
+.visibility-option {
+  flex: 1; height: 34px; border: 1.5px solid #555; border-radius: 6px;
+  background: #363636; color: #aaa; font-size: 13px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 4px;
+  transition: all 0.2s;
+}
+
+.visibility-option:hover { border-color: #fb7299; color: #e0e0e0; }
+
+.visibility-option.private.active {
+  border-color: #52c41a; color: #52c41a; background: #1a2e1a; font-weight: 600;
+}
+
+.visibility-option.public.active {
+  border-color: #1890ff; color: #1890ff; background: #1a2a3a; font-weight: 600;
+}
+
+.visibility-option:disabled { opacity: 0.5; cursor: not-allowed; }
+
 .github-actions { display: flex; gap: 8px; margin-bottom: 8px; }
 
 .github-action-btn {
