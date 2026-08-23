@@ -1,4 +1,4 @@
-﻿/**
+/**
  * BILIBAN Content Script v14
  * 按钮插入到用户名旁边，与 UP 主名字同行；Gate 直播页跳过屏蔽按钮
  */
@@ -30,6 +30,42 @@
 :host(.dark) .biliban-block-btn{background:#3a3a3a;color:#bbb;border-color:#555}
 :host(.dark) .biliban-block-btn:hover{background:#ff4d4f;color:white;border-color:#ff4d4f}`;
 
+  // 分组选择器样式
+  const PICKER_CSS = `.biliban-group-picker{background:#2b2b2b;border:1px solid #4a4a4a;border-radius:8px;padding:4px;min-width:180px;max-width:280px;max-height:400px;overflow-y:auto;box-shadow:0 4px 16px rgba(0,0,0,0.4);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.biliban-picker-title{padding:8px 12px;font-size:12px;color:#888;font-weight:600;border-bottom:1px solid #404040;margin-bottom:4px}
+.biliban-picker-chunk{margin-bottom:2px}
+.biliban-picker-chunk-header{display:flex;align-items:center;gap:6px;padding:6px 10px;cursor:pointer;border-radius:4px;transition:background 0.15s}
+.biliban-picker-chunk-header:hover{background:#3a3a3a}
+.biliban-picker-chunk-arrow{font-size:8px;color:#888;transition:transform 0.2s;width:12px;text-align:center}
+.biliban-picker-chunk-header.expanded .biliban-picker-chunk-arrow{transform:rotate(90deg)}
+.biliban-picker-chunk-name{font-size:11px;color:#fb7299;font-weight:600}
+.biliban-picker-chunk-count{font-size:10px;color:#666;margin-left:auto}
+.biliban-picker-chunk-body{padding-left:8px}
+.biliban-picker-item{padding:6px 12px;font-size:13px;color:#e0e0e0;cursor:pointer;border-radius:4px;transition:background 0.15s}
+.biliban-picker-item:hover{background:#404040}
+.biliban-picker-item.disabled{color:#666;cursor:default}
+.biliban-picker-item.disabled:hover{background:transparent}
+.biliban-picker-new{color:#fb7299;border-top:1px solid #404040;margin-top:4px;padding-top:8px}
+.biliban-picker-new:hover{background:#3a2028}
+.biliban-picker-input{width:100%;height:30px;padding:0 8px;margin-bottom:6px;border:1.5px solid #555;border-radius:4px;font-size:12px;outline:none;background:#404040;color:#e0e0e0;box-sizing:border-box}
+.biliban-picker-input:focus{border-color:#fb7299}
+.biliban-picker-select{width:100%;height:30px;padding:0 8px;margin-bottom:8px;border:1.5px solid #555;border-radius:4px;font-size:12px;outline:none;background:#404040;color:#e0e0e0;box-sizing:border-box}
+.biliban-picker-select:focus{border-color:#fb7299}
+.biliban-picker-new-actions{display:flex;gap:6px;justify-content:flex-end}
+.biliban-picker-btn{height:28px;padding:0 12px;border:1px solid #555;border-radius:4px;background:#3a3a3a;color:#ccc;font-size:12px;cursor:pointer;transition:all 0.15s}
+.biliban-picker-btn:hover{border-color:#fb7299;color:#fb7299}
+.biliban-picker-btn.primary{background:#fb7299;border-color:#fb7299;color:white;font-weight:600}
+.biliban-picker-btn.primary:hover{background:#e6608a;color:white}`;
+
+  // 注入选择器样式
+  function injectPickerStyles(doc) {
+    if (!doc || doc.querySelector('#biliban-picker-style')) return;
+    const style = doc.createElement('style');
+    style.id = 'biliban-picker-style';
+    style.textContent = PICKER_CSS;
+    doc.head ? doc.head.appendChild(style) : doc.appendChild(style);
+  }
+
   function injectBlockBtnStyles(sr) {
     if (!sr || sr.querySelector('#biliban-block-btn-style')) return;
     const style = document.createElement('style');
@@ -42,6 +78,9 @@
     blockedUids = await BilibanStorage.getBlockedUids();
     console.log('[BILIBAN] v14 已加载 ' + blockedUids.size + ' 个屏蔽 UID');
     syncUidsToInterceptor();
+    
+    // 注入选择器样式
+    injectPickerStyles(document);
 
     new MutationObserver(() => { scanAll(); checkSpaceBlacklist(); }).observe(document.body, {
       childList: true, subtree: true
@@ -467,76 +506,160 @@
 
   // ==================== 选组弹窗 ====================
 
+  async function renderPickerContent(picker, uid) {
+    const groups = await BilibanStorage.getGroups();
+    const chunks = await BilibanStorage.getChunks();
+    const expandState = await BilibanStorage.getChunkExpandState();
+
+    let html = '<div class="biliban-picker-title">选择分组屏蔽</div>';
+    
+    if (groups.length === 0) {
+      html += '<div class="biliban-picker-item disabled">暂无分组，请先在插件面板创建</div>';
+    } else {
+      // 按块分组
+      const groupsByChunk = new Map();
+      groupsByChunk.set(null, []);
+      
+      for (const group of groups) {
+        const chunkId = group.chunkId || null;
+        if (!groupsByChunk.has(chunkId)) {
+          groupsByChunk.set(chunkId, []);
+        }
+        groupsByChunk.get(chunkId).push(group);
+      }
+
+      for (const [chunkId, chunkGroups] of groupsByChunk) {
+        if (chunkGroups.length === 0) continue;
+
+        const chunk = chunkId ? chunks.find(c => c.id === chunkId) : null;
+        const chunkName = chunk ? chunk.name : '未分组';
+        const stateKey = chunkId || '_ungrouped';
+        const isExpanded = expandState[stateKey] !== false;
+
+        html += '<div class="biliban-picker-chunk" data-chunk-id="' + stateKey + '">';
+        html += '<div class="biliban-picker-chunk-header' + (isExpanded ? ' expanded' : '') + '" data-state-key="' + stateKey + '">';
+        html += '<span class="biliban-picker-chunk-arrow">▶</span>';
+        html += '<span class="biliban-picker-chunk-name">' + escapeHtml(chunkName) + '</span>';
+        html += '<span class="biliban-picker-chunk-count">' + chunkGroups.length + '</span>';
+        html += '</div>';
+        html += '<div class="biliban-picker-chunk-body"' + (isExpanded ? '' : ' style="display:none"') + '>';
+
+        chunkGroups.forEach(group => {
+          const alreadyIn = group.uids.includes(Number(uid));
+          html += '<div class="biliban-picker-item ' + (alreadyIn ? 'disabled' : '') +
+            '" data-group-id="' + group.id + '" data-uid="' + uid + '">' +
+            (alreadyIn ? '✓ ' : '') + escapeHtml(group.name) + '</div>';
+        });
+
+        html += '</div></div>';
+      }
+    }
+    html += '<div class="biliban-picker-item biliban-picker-new">+ 新建分组并添加</div>';
+    picker.innerHTML = html;
+
+    // 绑定块展开收起事件
+    picker.querySelectorAll('.biliban-picker-chunk-header').forEach(header => {
+      header.addEventListener('click', async () => {
+        const isExpanded = header.classList.contains('expanded');
+        header.classList.toggle('expanded', !isExpanded);
+        const body = header.nextElementSibling;
+        if (body) body.style.display = isExpanded ? 'none' : 'block';
+        // 保存展开状态
+        await BilibanStorage.setChunkExpandState(header.dataset.stateKey, !isExpanded);
+      });
+    });
+
+    // 绑定分组点击事件
+    picker.querySelectorAll('.biliban-picker-item:not(.disabled):not(.biliban-picker-new)').forEach(item => {
+      item.addEventListener('click', async () => {
+        const result = await BilibanStorage.addUidToGroup(item.dataset.groupId, Number(item.dataset.uid));
+        if (!result.ok) {
+          if (result.reason === 'duplicate') {
+            showContentToast('该用户已在「' + (result.groupName || '该分组') + '」中', 'warn');
+          }
+          return;
+        }
+        picker.remove();
+        blockedUids = await BilibanStorage.getBlockedUids();
+        syncUidsToInterceptor();
+        removeCardById(uid);
+        removeCommentById(uid);
+        scanAll();
+      });
+    });
+
+    // 新建分组
+    picker.querySelector('.biliban-picker-new')?.addEventListener('click', async () => {
+      renderNewGroupForm(picker, uid);
+    });
+  }
+
+  // 渲染"新建分组"表单（支持选择所属块）
+  async function renderNewGroupForm(picker, uid) {
+    const chunks = await BilibanStorage.getChunks();
+    let html = '<div class="biliban-picker-title">新建分组并添加</div>';
+    html += '<input type="text" class="biliban-picker-input" id="biliban-new-group-name" placeholder="输入分组名称">';
+    if (chunks.length > 0) {
+      html += '<select class="biliban-picker-select" id="biliban-new-group-chunk">';
+      html += '<option value="">不分配块</option>';
+      chunks.forEach(c => {
+        html += '<option value="' + c.id + '">' + escapeHtml(c.name) + '</option>';
+      });
+      html += '</select>';
+    }
+    html += '<div class="biliban-picker-new-actions">';
+    html += '<button class="biliban-picker-btn" id="biliban-new-group-cancel">取消</button>';
+    html += '<button class="biliban-picker-btn primary" id="biliban-new-group-ok">创建</button>';
+    html += '</div>';
+    picker.innerHTML = html;
+
+    const nameInput = picker.querySelector('#biliban-new-group-name');
+    const chunkSelect = picker.querySelector('#biliban-new-group-chunk');
+    nameInput.focus();
+
+    const doCreate = async () => {
+      const name = nameInput.value.trim();
+      if (!name) return;
+      const chunkId = chunkSelect ? chunkSelect.value || null : null;
+      const group = await BilibanStorage.addGroup(name, chunkId);
+      const result = await BilibanStorage.addUidToGroup(group.id, uid);
+      if (!result.ok) {
+        if (result.reason === 'duplicate') {
+          showContentToast('该用户已在「' + (result.groupName || '该分组') + '」中', 'warn');
+        }
+        return;
+      }
+      picker.remove();
+      blockedUids = await BilibanStorage.getBlockedUids();
+      syncUidsToInterceptor();
+      removeCardById(uid);
+      removeCommentById(uid);
+      scanAll();
+    };
+
+    picker.querySelector('#biliban-new-group-ok').addEventListener('click', doCreate);
+    picker.querySelector('#biliban-new-group-cancel').addEventListener('click', () => picker.remove());
+    nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doCreate(); });
+  }
+
   function showGroupPicker(anchorEl, uid) {
     document.querySelectorAll('.biliban-group-picker').forEach(p => p.remove());
     const picker = document.createElement('div');
     picker.className = 'biliban-group-picker';
 
-    BilibanStorage.getGroups().then(groups => {
-      let html = '<div class="biliban-picker-title">选择分组屏蔽</div>';
-      if (groups.length === 0) {
-        html += '<div class="biliban-picker-item disabled">暂无分组，请先在插件面板创建</div>';
-      } else {
-        groups.forEach(group => {
-          const alreadyIn = group.uids.includes(Number(uid));
-          html += '<div class="biliban-picker-item ' + (alreadyIn ? 'disabled' : '') +
-            '" data-group-id="' + group.id + '" data-uid="' + uid + '">' +
-            (alreadyIn ? '✓ ' : '') + group.name + '</div>';
-        });
-      }
-      html += '<div class="biliban-picker-item biliban-picker-new">+ 新建分组并添加</div>';
-      picker.innerHTML = html;
+    const rect = anchorEl.getBoundingClientRect();
+    picker.style.position = 'fixed';
+    picker.style.left = Math.min(rect.left, window.innerWidth - 200) + 'px';
+    picker.style.top = (rect.bottom + 4) + 'px';
+    picker.style.zIndex = '999999';
+    document.body.appendChild(picker);
 
-      const rect = anchorEl.getBoundingClientRect();
-      picker.style.position = 'fixed';
-      picker.style.left = Math.min(rect.left, window.innerWidth - 200) + 'px';
-      picker.style.top = (rect.bottom + 4) + 'px';
-      picker.style.zIndex = '999999';
-      document.body.appendChild(picker);
+    renderPickerContent(picker, uid);
 
-      picker.querySelectorAll('.biliban-picker-item:not(.disabled):not(.biliban-picker-new)').forEach(item => {
-        item.addEventListener('click', async () => {
-          const result = await BilibanStorage.addUidToGroup(item.dataset.groupId, Number(item.dataset.uid));
-          if (!result.ok) {
-            if (result.reason === 'duplicate') {
-              showContentToast('该用户已在「' + (result.groupName || '该分组') + '」中', 'warn');
-            }
-            return;
-          }
-          picker.remove();
-          blockedUids = await BilibanStorage.getBlockedUids();
-          syncUidsToInterceptor();
-          removeCardById(uid);
-          removeCommentById(uid);
-          scanAll();
-        });
-      });
-
-      picker.querySelector('.biliban-picker-new')?.addEventListener('click', async () => {
-        const name = prompt('输入新分组名称：');
-        if (name && name.trim()) {
-          const group = await BilibanStorage.addGroup(name.trim());
-          const result = await BilibanStorage.addUidToGroup(group.id, uid);
-          if (!result.ok) {
-            if (result.reason === 'duplicate') {
-              showContentToast('该用户已在「' + (result.groupName || '该分组') + '」中', 'warn');
-            }
-            return;
-          }
-          picker.remove();
-          blockedUids = await BilibanStorage.getBlockedUids();
-          syncUidsToInterceptor();
-          removeCardById(uid);
-          removeCommentById(uid);
-          scanAll();
-        }
-      });
-
-      setTimeout(() => {
-        const close = (e) => { if (!picker.contains(e.target)) { picker.remove(); document.removeEventListener('click', close); } };
-        document.addEventListener('click', close);
-      }, 0);
-    });
+    setTimeout(() => {
+      const close = (e) => { if (!picker.contains(e.target)) { picker.remove(); document.removeEventListener('click', close); } };
+      document.addEventListener('click', close);
+    }, 0);
   }
 
 
@@ -607,63 +730,20 @@
     document.querySelectorAll('.biliban-group-picker').forEach(p => p.remove());
     const picker = document.createElement('div');
     picker.className = 'biliban-group-picker';
-    BilibanStorage.getGroups().then(groups => {
-      let html = '<div class="biliban-picker-title">选择分组屏蔽</div>';
-      if (groups.length === 0) {
-        html += '<div class="biliban-picker-item disabled">暂无分组，请先在插件面板创建</div>';
-      } else {
-        groups.forEach(group => {
-          const alreadyIn = group.uids.includes(Number(uid));
-          html += '<div class="biliban-picker-item ' + (alreadyIn ? 'disabled' : '') + '" data-group-id="' + group.id + '" data-uid="' + uid + '">' + (alreadyIn ? '\u2713 ' : '') + group.name + '</div>';
-        });
-      }
-      html += '<div class="biliban-picker-item biliban-picker-new">+ 新建分组并添加</div>';
-      picker.innerHTML = html;
-      const rect = anchorEl.getBoundingClientRect();
-      picker.style.position = 'fixed';
-      picker.style.left = Math.min(rect.left, window.innerWidth - 200) + 'px';
-      picker.style.top = (rect.bottom + 4) + 'px';
-      picker.style.zIndex = '999999';
-      document.body.appendChild(picker);
-      picker.querySelectorAll('.biliban-picker-item:not(.disabled):not(.biliban-picker-new)').forEach(item => {
-        item.addEventListener('click', async () => {
-          const result = await BilibanStorage.addUidToGroup(item.dataset.groupId, Number(item.dataset.uid));
-          if (!result.ok) {
-            if (result.reason === 'duplicate') {
-              showContentToast('该用户已在「' + (result.groupName || '该分组') + '」中', 'warn');
-            }
-            return;
-          }
-          picker.remove();
-          blockedUids = await BilibanStorage.getBlockedUids();
-          syncUidsToInterceptor();
-          processBewlyCards();
-          scanAll();
-        });
-      });
-      picker.querySelector('.biliban-picker-new')?.addEventListener('click', async () => {
-        const name = prompt('输入新分组名称：');
-        if (name && name.trim()) {
-          const group = await BilibanStorage.addGroup(name.trim());
-          const result = await BilibanStorage.addUidToGroup(group.id, uid);
-          if (!result.ok) {
-            if (result.reason === 'duplicate') {
-              showContentToast('该用户已在「' + (result.groupName || '该分组') + '」中', 'warn');
-            }
-            return;
-          }
-          picker.remove();
-          blockedUids = await BilibanStorage.getBlockedUids();
-          syncUidsToInterceptor();
-          processBewlyCards();
-          scanAll();
-        }
-      });
-      setTimeout(() => {
-        const close = (e) => { if (!picker.contains(e.target)) { picker.remove(); document.removeEventListener('click', close); } };
-        document.addEventListener('click', close);
-      }, 0);
-    });
+
+    const rect = anchorEl.getBoundingClientRect();
+    picker.style.position = 'fixed';
+    picker.style.left = Math.min(rect.left, window.innerWidth - 200) + 'px';
+    picker.style.top = (rect.bottom + 4) + 'px';
+    picker.style.zIndex = '999999';
+    document.body.appendChild(picker);
+
+    renderPickerContent(picker, uid);
+
+    setTimeout(() => {
+      const close = (e) => { if (!picker.contains(e.target)) { picker.remove(); document.removeEventListener('click', close); } };
+      document.addEventListener('click', close);
+    }, 0);
   }
 
   // ==================== 空间主页黑名单检测 ====================

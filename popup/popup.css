@@ -407,17 +407,54 @@ body {
 .chunk-group-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 8px 12px; margin-bottom: 6px; margin-top: 8px;
-  background: #3a3a3a; border-radius: 6px;
+  background: #3a3a3a; border-radius: 6px; cursor: pointer;
+  transition: background 0.2s; user-select: none;
 }
 
 .chunk-group-header:first-child { margin-top: 0; }
+.chunk-group-header:hover { background: #424242; }
+
+.chunk-group-left {
+  display: flex; align-items: center; gap: 8px;
+}
+
+.chunk-group-expand {
+  font-size: 10px; color: #888; transition: transform 0.2s;
+  width: 16px; text-align: center;
+}
+
+.chunk-group-header.expanded .chunk-group-expand {
+  transform: rotate(90deg);
+}
 
 .chunk-group-name {
   font-size: 12px; font-weight: 600; color: #fb7299;
 }
 
+.chunk-group-right {
+  display: flex; align-items: center; gap: 8px;
+}
+
 .chunk-group-count {
   font-size: 11px; color: #888;
+}
+
+.chunk-group-collapse-all {
+  font-size: 10px; color: #888; cursor: pointer; padding: 2px 6px;
+  border: 1px solid #555; border-radius: 3px; background: transparent;
+  transition: all 0.2s;
+}
+
+.chunk-group-collapse-all:hover {
+  border-color: #fb7299; color: #fb7299;
+}
+
+.chunk-group-body {
+  display: none;
+}
+
+.chunk-group-header.expanded + .chunk-group-body {
+  display: block;
 }
 
 /* ==================== 分组卡片 ==================== */

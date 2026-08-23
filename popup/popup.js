@@ -98,6 +98,7 @@ async function render() {
 
   const groups = await BilibanStorage.getGroups();
   const chunks = await BilibanStorage.getChunks();
+  const expandState = await BilibanStorage.getChunkExpandState();
 
   selectGroup.innerHTML = groups.length === 0
     ? '<option value="">请先创建分组</option>'
@@ -134,15 +135,37 @@ async function render() {
 
       const chunk = chunkId ? chunks.find(c => c.id === chunkId) : null;
       const chunkName = chunk ? chunk.name : '未分组';
+      const stateKey = chunkId || '_ungrouped';
+      const isExpanded = expandState[stateKey] !== false; // 默认展开
+      
+      // 块容器
+      const chunkContainer = document.createElement('div');
+      chunkContainer.className = 'chunk-group-container';
+      chunkContainer.dataset.chunkId = stateKey;
       
       // 块标题
       const chunkHeader = document.createElement('div');
-      chunkHeader.className = 'chunk-group-header';
+      chunkHeader.className = 'chunk-group-header' + (isExpanded ? ' expanded' : '');
       chunkHeader.innerHTML = `
-        <span class="chunk-group-name">${chunkName}</span>
-        <span class="chunk-group-count">${chunkGroups.length} 个分组</span>
+        <div class="chunk-group-left">
+          <span class="chunk-group-expand">▶</span>
+          <span class="chunk-group-name">${chunkName}</span>
+          <span class="chunk-group-count">${chunkGroups.length} 个分组</span>
+        </div>
       `;
-      groupsContainer.appendChild(chunkHeader);
+      
+      // 点击展开收起
+      chunkHeader.addEventListener('click', async () => {
+        const nowExpanded = !chunkHeader.classList.contains('expanded');
+        chunkHeader.classList.toggle('expanded', nowExpanded);
+        await BilibanStorage.setChunkExpandState(stateKey, nowExpanded);
+      });
+      
+      chunkContainer.appendChild(chunkHeader);
+      
+      // 块内容容器（展开收起由 CSS `.chunk-group-header.expanded + .chunk-group-body` 控制）
+      const chunkBody = document.createElement('div');
+      chunkBody.className = 'chunk-group-body';
 
       // 渲染该块下的分组
       for (const group of chunkGroups) {
@@ -182,9 +205,12 @@ async function render() {
             <div class="uid-list">${uidTags}</div>
           </div>`;
 
-        groupsContainer.appendChild(card);
+        chunkBody.appendChild(card);
         if (expandedIds.has(group.id)) card.classList.add('expanded');
       }
+      
+      chunkContainer.appendChild(chunkBody);
+      groupsContainer.appendChild(chunkContainer);
     }
   }
 
