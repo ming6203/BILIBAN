@@ -41,6 +41,10 @@ const sourcePullStatus = document.getElementById('source-pull-status');
 const sourceCount = document.getElementById('source-count');
 const sourceList = document.getElementById('source-list');
 
+// ==================== 拖拽排序相关变量 ====================
+let draggedCard = null;
+let draggedGroupId = null;
+
 // ==================== 工具函数 ====================
 
 function showError(msg) {
@@ -95,6 +99,11 @@ async function render() {
 
       card.innerHTML = `
         <div class="group-header">
+          <div class="drag-handle" data-group-id="${group.id}" title="拖拽排序">
+            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path d="M11 18c0 1.1-.9 2-2 2s-2-.9-2-2 .9-2 2-2 2 .9 2 2zm-2-8c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0-6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm6 4c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/>
+            </svg>
+          </div>
           <div class="group-toggle ${group.enabled ? 'active' : ''}" data-group-id="${group.id}"></div>
           <div class="group-name" data-group-id="${group.id}">${group.name}</div>
           <div class="group-count">${group.uids.length} 人</div>
@@ -122,7 +131,7 @@ async function render() {
 function bindEvents() {
   document.querySelectorAll('.group-header').forEach(header => {
     header.addEventListener('click', (e) => {
-      if (e.target.closest('.group-toggle') || e.target.closest('.group-action-btn')) return;
+      if (e.target.closest('.group-toggle') || e.target.closest('.group-action-btn') || e.target.closest('.drag-handle')) return;
       header.parentElement.classList.toggle('expanded');
     });
   });
@@ -168,6 +177,120 @@ function bindEvents() {
       }
     });
   });
+
+  // 绑定拖拽排序事件
+  bindDragEvents();
+}
+
+// ==================== 拖拽排序功能 ====================
+
+function bindDragEvents() {
+  const dragHandles = document.querySelectorAll('.drag-handle');
+  
+  dragHandles.forEach(handle => {
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      const card = handle.closest('.group-card');
+      draggedCard = card;
+      draggedGroupId = handle.dataset.groupId;
+      
+      // 添加拖拽样式
+      card.classList.add('dragging');
+      
+      // 设置拖拽图像
+      const dragImage = card.cloneNode(true);
+      dragImage.style.position = 'absolute';
+      dragImage.style.top = '-1000px';
+      dragImage.style.opacity = '0.8';
+      dragImage.style.width = card.offsetWidth + 'px';
+      document.body.appendChild(dragImage);
+      
+      // 创建自定义拖拽事件
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const cardRect = card.getBoundingClientRect();
+      const offsetX = startX - cardRect.left;
+      const offsetY = startY - cardRect.top;
+      
+      const onMouseMove = (moveEvent) => {
+        const x = moveEvent.clientX - offsetX;
+        const y = moveEvent.clientY - offsetY;
+        
+        // 查找目标卡片
+        const targetCard = findTargetCard(moveEvent.clientX, moveEvent.clientY);
+        
+        // 清除所有 drag-over 样式
+        document.querySelectorAll('.group-card.drag-over').forEach(c => {
+          c.classList.remove('drag-over');
+        });
+        
+        // 添加 drag-over 样式到目标卡片
+        if (targetCard && targetCard !== draggedCard) {
+          targetCard.classList.add('drag-over');
+        }
+      };
+      
+      const onMouseUp = async (upEvent) => {
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+        
+        // 移除拖拽图像
+        document.body.removeChild(dragImage);
+        
+        // 查找目标卡片
+        const targetCard = findTargetCard(upEvent.clientX, upEvent.clientY);
+        
+        if (targetCard && targetCard !== draggedCard) {
+          const targetGroupId = targetCard.dataset.groupId;
+          
+          // 获取当前所有分组
+          const groups = await BilibanStorage.getGroups();
+          const groupIds = groups.map(g => g.id);
+          
+          // 找到拖拽源和目标的索引
+          const fromIndex = groupIds.indexOf(draggedGroupId);
+          const toIndex = groupIds.indexOf(targetGroupId);
+          
+          if (fromIndex !== -1 && toIndex !== -1) {
+            // 重新排列数组
+            const [movedGroup] = groupIds.splice(fromIndex, 1);
+            groupIds.splice(toIndex, 0, movedGroup);
+            
+            // 保存新的顺序
+            await BilibanStorage.reorderGroups(groupIds);
+            
+            // 重新渲染
+            render();
+            showToast('✅ 分组顺序已更新');
+          }
+        }
+        
+        // 清除所有样式
+        document.querySelectorAll('.group-card').forEach(c => {
+          c.classList.remove('dragging', 'drag-over');
+        });
+        
+        draggedCard = null;
+        draggedGroupId = null;
+      };
+      
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    });
+  });
+}
+
+function findTargetCard(x, y) {
+  const cards = document.querySelectorAll('.group-card');
+  for (const card of cards) {
+    const rect = card.getBoundingClientRect();
+    if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+      return card;
+    }
+  }
+  return null;
 }
 
 // ==================== 添加用户 ====================

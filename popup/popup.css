@@ -1,4 +1,4 @@
-﻿/* ==================== 全局样式 ==================== */
+/* ==================== 全局样式 ==================== */
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 body {
@@ -235,11 +235,36 @@ body {
 .group-card {
   background: #363636; border-radius: 10px; margin-bottom: 10px;
   box-shadow: 0 1px 3px rgba(0,0,0,0.3); overflow: hidden;
+  transition: transform 0.2s, box-shadow 0.2s, opacity 0.2s;
+}
+
+.group-card.dragging {
+  opacity: 0.5;
+  transform: scale(0.98);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+}
+
+.group-card.drag-over {
+  border-top: 2px solid #fb7299;
+  margin-top: -2px;
 }
 
 .group-header {
   display: flex; align-items: center; padding: 10px 12px; gap: 8px;
   cursor: pointer; user-select: none;
+}
+
+.drag-handle {
+  width: 20px; height: 20px; cursor: grab; color: #666;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; transition: color 0.2s;
+}
+
+.drag-handle:hover { color: #fb7299; }
+.drag-handle:active { cursor: grabbing; }
+
+.drag-handle svg {
+  width: 16px; height: 16px; fill: currentColor;
 }
 
 .group-toggle {
