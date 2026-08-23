@@ -38,7 +38,7 @@ Chrome 浏览器插件，用于屏蔽 B 站指定用户的评论、视频推荐�
 ### 从源码安装
 1. **下载代码**：Clone 或 Download ZIP 本仓库
    ```bash
-   git clone https://github.com/yourusername/biliban.git
+   git clone https://github.com/ming6203/BILIBAN.git
    ```
 2. **打开 Chrome 扩展页面**：访问 `chrome://extensions/`
 3. **启用开发者模式**：点击右上角的开发者模式开关
