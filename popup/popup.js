@@ -32,6 +32,19 @@ const githubSyncStatus = document.getElementById('github-sync-status');
 const githubLink = document.getElementById('github-link');
 const githubLinkUrl = document.getElementById('github-link-url');
 
+// 分块相关
+const btnAddChunk = document.getElementById('btn-add-chunk');
+const chunkList = document.getElementById('chunk-list');
+const btnPushSelected = document.getElementById('btn-push-selected');
+const btnPullSelected = document.getElementById('btn-pull-selected');
+const chunkSyncStatus = document.getElementById('chunk-sync-status');
+const chunkModalOverlay = document.getElementById('chunk-modal-overlay');
+const chunkModalTitle = document.getElementById('chunk-modal-title');
+const chunkModalBody = document.getElementById('chunk-modal-body');
+const chunkModalClose = document.getElementById('chunk-modal-close');
+const chunkModalCancel = document.getElementById('chunk-modal-cancel');
+const chunkModalConfirm = document.getElementById('chunk-modal-confirm');
+
 // 订阅相关
 const sourceInput = document.getElementById('source-input');
 const sourceAdd = document.getElementById('source-add');
@@ -44,6 +57,9 @@ const sourceList = document.getElementById('source-list');
 // ==================== 拖拽排序相关变量 ====================
 let draggedCard = null;
 let draggedGroupId = null;
+
+// ==================== 分块选择状态 ====================
+let selectedChunkIds = new Set();
 
 // ==================== 工具函数 ====================
 
@@ -63,6 +79,17 @@ function showModal(title, bodyHTML, onConfirm, confirmText = '确认') {
   });
 }
 
+function showChunkModal(title, bodyHTML, onConfirm) {
+  chunkModalTitle.textContent = title;
+  chunkModalBody.innerHTML = bodyHTML;
+  chunkModalOverlay.style.display = 'flex';
+  return new Promise((resolve) => {
+    chunkModalConfirm.onclick = () => { chunkModalOverlay.style.display = 'none'; resolve(onConfirm()); };
+    chunkModalCancel.onclick = () => { chunkModalOverlay.style.display = 'none'; resolve(null); };
+    chunkModalClose.onclick = () => { chunkModalOverlay.style.display = 'none'; resolve(null); };
+  });
+}
+
 // ==================== 渲染 ====================
 
 async function render() {
@@ -70,10 +97,15 @@ async function render() {
   document.querySelectorAll('.group-card.expanded').forEach(c => expandedIds.add(c.dataset.groupId));
 
   const groups = await BilibanStorage.getGroups();
+  const chunks = await BilibanStorage.getChunks();
 
   selectGroup.innerHTML = groups.length === 0
     ? '<option value="">请先创建分组</option>'
-    : groups.map(g => `<option value="${g.id}">${g.name}</option>`).join('');
+    : groups.map(g => {
+        const chunk = chunks.find(c => c.id === g.chunkId);
+        const chunkLabel = chunk ? ` [${chunk.name}]` : '';
+        return `<option value="${g.id}">${g.name}${chunkLabel}</option>`;
+      }).join('');
 
   groupsContainer.innerHTML = '';
 
@@ -84,41 +116,75 @@ async function render() {
         <div class="empty-text">还没有屏蔽分组<br>点击下方按钮创建第一个分组</div>
       </div>`;
   } else {
+    // 按块分组显示
+    const groupsByChunk = new Map();
+    groupsByChunk.set(null, []); // 未分组的
+    
     for (const group of groups) {
-      const card = document.createElement('div');
-      card.className = 'group-card';
-      card.dataset.groupId = group.id;
+      const chunkId = group.chunkId || null;
+      if (!groupsByChunk.has(chunkId)) {
+        groupsByChunk.set(chunkId, []);
+      }
+      groupsByChunk.get(chunkId).push(group);
+    }
 
-      const uidTags = group.uids.length > 0
-        ? group.uids.map(uid => `
-          <div class="uid-tag">
-            <span>${uid}</span>
-            <button class="uid-remove" data-uid="${uid}" data-group-id="${group.id}" title="移除">×</button>
-          </div>`).join('')
-        : '<div class="empty-group">该分组暂无用户</div>';
+    // 渲染每个块
+    for (const [chunkId, chunkGroups] of groupsByChunk) {
+      if (chunkGroups.length === 0) continue;
 
-      card.innerHTML = `
-        <div class="group-header">
-          <div class="drag-handle" data-group-id="${group.id}" title="拖拽排序">
-            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-              <path d="M11 18c0 1.1-.9 2-2 2s-2-.9-2-2 .9-2 2-2 2 .9 2 2zm-2-8c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0-6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm6 4c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/>
-            </svg>
+      const chunk = chunkId ? chunks.find(c => c.id === chunkId) : null;
+      const chunkName = chunk ? chunk.name : '未分组';
+      
+      // 块标题
+      const chunkHeader = document.createElement('div');
+      chunkHeader.className = 'chunk-group-header';
+      chunkHeader.innerHTML = `
+        <span class="chunk-group-name">${chunkName}</span>
+        <span class="chunk-group-count">${chunkGroups.length} 个分组</span>
+      `;
+      groupsContainer.appendChild(chunkHeader);
+
+      // 渲染该块下的分组
+      for (const group of chunkGroups) {
+        const card = document.createElement('div');
+        card.className = 'group-card';
+        card.dataset.groupId = group.id;
+
+        const uidTags = group.uids.length > 0
+          ? group.uids.map(uid => `
+            <div class="uid-tag">
+              <span>${uid}</span>
+              <button class="uid-remove" data-uid="${uid}" data-group-id="${group.id}" title="移除">×</button>
+            </div>`).join('')
+          : '<div class="empty-group">该分组暂无用户</div>';
+
+        const chunkBadge = chunk ? `<span class="group-chunk-badge">${chunk.name}</span>` : '';
+
+        card.innerHTML = `
+          <div class="group-header">
+            <div class="drag-handle" data-group-id="${group.id}" title="拖拽排序">
+              <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path d="M11 18c0 1.1-.9 2-2 2s-2-.9-2-2 .9-2 2-2 2 .9 2 2zm-2-8c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0-6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm6 4c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/>
+              </svg>
+            </div>
+            <div class="group-toggle ${group.enabled ? 'active' : ''}" data-group-id="${group.id}"></div>
+            <div class="group-name" data-group-id="${group.id}">${group.name}</div>
+            ${chunkBadge}
+            <div class="group-count">${group.uids.length} 人</div>
+            <div class="group-expand">▼</div>
+            <div class="group-actions">
+              <button class="group-action-btn" data-action="rename" data-group-id="${group.id}" title="重命名">✏️</button>
+              <button class="group-action-btn" data-action="move" data-group-id="${group.id}" title="移动到块">📦</button>
+              <button class="group-action-btn" data-action="delete" data-group-id="${group.id}" title="删除分组">🗑️</button>
+            </div>
           </div>
-          <div class="group-toggle ${group.enabled ? 'active' : ''}" data-group-id="${group.id}"></div>
-          <div class="group-name" data-group-id="${group.id}">${group.name}</div>
-          <div class="group-count">${group.uids.length} 人</div>
-          <div class="group-expand">▼</div>
-          <div class="group-actions">
-            <button class="group-action-btn" data-action="rename" data-group-id="${group.id}" title="重命名">✏️</button>
-            <button class="group-action-btn" data-action="delete" data-group-id="${group.id}" title="删除分组">🗑️</button>
-          </div>
-        </div>
-        <div class="group-body">
-          <div class="uid-list">${uidTags}</div>
-        </div>`;
+          <div class="group-body">
+            <div class="uid-list">${uidTags}</div>
+          </div>`;
 
-      groupsContainer.appendChild(card);
-      if (expandedIds.has(group.id)) card.classList.add('expanded');
+        groupsContainer.appendChild(card);
+        if (expandedIds.has(group.id)) card.classList.add('expanded');
+      }
     }
   }
 
@@ -128,6 +194,7 @@ async function render() {
 
   bindEvents();
 }
+
 function bindEvents() {
   document.querySelectorAll('.group-header').forEach(header => {
     header.addEventListener('click', (e) => {
@@ -144,7 +211,7 @@ function bindEvents() {
     });
   });
 
-    document.querySelectorAll('.uid-remove').forEach(btn => {
+  document.querySelectorAll('.uid-remove').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
       await BilibanStorage.removeUidFromGroup(btn.dataset.groupId, Number(btn.dataset.uid));
@@ -174,6 +241,10 @@ function bindEvents() {
             if (input.value.trim()) await BilibanStorage.renameGroup(groupId, input.value.trim());
           });
         if (result !== null) render();
+      }
+
+      if (action === 'move') {
+        await showMoveGroupDialog(groupId);
       }
     });
   });
@@ -293,6 +364,279 @@ function findTargetCard(x, y) {
   return null;
 }
 
+// ==================== 分块管理功能 ====================
+
+async function renderChunks() {
+  const chunks = await BilibanStorage.getChunks();
+  const groups = await BilibanStorage.getGroups();
+  
+  if (chunks.length === 0) {
+    chunkList.innerHTML = '<div class="chunk-empty">暂无分块，点击上方按钮创建</div>';
+    return;
+  }
+
+  chunkList.innerHTML = chunks.map(chunk => {
+    const chunkGroups = groups.filter(g => g.chunkId === chunk.id);
+    const totalUids = chunkGroups.reduce((sum, g) => sum + g.uids.length, 0);
+    const isSelected = selectedChunkIds.has(chunk.id);
+    
+    return `
+      <div class="chunk-item" data-chunk-id="${chunk.id}">
+        <input type="checkbox" class="chunk-checkbox" data-chunk-id="${chunk.id}" ${isSelected ? 'checked' : ''}>
+        <div class="chunk-info">
+          <div class="chunk-name">${chunk.name}</div>
+          <div class="chunk-meta">${chunkGroups.length} 个分组 · ${totalUids} 个用户</div>
+        </div>
+        <div class="chunk-actions-inline">
+          <button class="chunk-action-btn" data-action="edit" data-chunk-id="${chunk.id}" title="编辑">✏️</button>
+          <button class="chunk-action-btn delete" data-action="delete" data-chunk-id="${chunk.id}" title="删除">🗑️</button>
+        </div>
+      </div>`;
+  }).join('');
+
+  // 绑定事件
+  chunkList.querySelectorAll('.chunk-checkbox').forEach(cb => {
+    cb.addEventListener('change', () => {
+      if (cb.checked) {
+        selectedChunkIds.add(cb.dataset.chunkId);
+      } else {
+        selectedChunkIds.delete(cb.dataset.chunkId);
+      }
+      updateChunkButtons();
+    });
+  });
+
+  chunkList.querySelectorAll('.chunk-action-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const action = btn.dataset.action;
+      const chunkId = btn.dataset.chunkId;
+
+      if (action === 'edit') {
+        await showEditChunkDialog(chunkId);
+      }
+
+      if (action === 'delete') {
+        const result = await showModal('删除分块', '<p>确定要删除这个块吗？块内的分组不会被删除，只会取消分组归属。</p>',
+          async () => { await BilibanStorage.removeChunk(chunkId); });
+        if (result !== null) {
+          selectedChunkIds.delete(chunkId);
+          await renderChunks();
+          render();
+        }
+      }
+    });
+  });
+
+  updateChunkButtons();
+}
+
+function updateChunkButtons() {
+  const hasSelection = selectedChunkIds.size > 0;
+  btnPushSelected.disabled = !hasSelection;
+  btnPullSelected.disabled = !hasSelection;
+}
+
+// 创建新块
+btnAddChunk.addEventListener('click', async () => {
+  const groups = await BilibanStorage.getGroups();
+  const result = await showChunkModal('创建新块', `
+    <label>块名称</label>
+    <input type="text" id="chunk-name-input" placeholder="如：广告号、杠精...">
+    <label style="margin-top:12px">选择分组（可选）</label>
+    <div class="group-assign-list">
+      ${groups.map(g => `
+        <div class="group-assign-item">
+          <input type="checkbox" class="group-assign-checkbox" data-group-id="${g.id}">
+          <span class="group-assign-name">${g.name}</span>
+          <span class="group-assign-count">${g.uids.length} 人</span>
+        </div>
+      `).join('')}
+    </div>
+  `, async () => {
+    const name = document.getElementById('chunk-name-input').value.trim();
+    if (!name) return null;
+
+    const chunk = await BilibanStorage.addChunk(name);
+    
+    // 分配选中的分组到新块
+    const checkboxes = document.querySelectorAll('.group-assign-checkbox:checked');
+    for (const cb of checkboxes) {
+      await BilibanStorage.moveGroupToChunk(cb.dataset.groupId, chunk.id);
+    }
+
+    return chunk;
+  });
+
+  if (result !== null) {
+    await renderChunks();
+    render();
+    showToast('✅ 块「' + result.name + '」已创建');
+  }
+});
+
+// 编辑块
+async function showEditChunkDialog(chunkId) {
+  const chunks = await BilibanStorage.getChunks();
+  const chunk = chunks.find(c => c.id === chunkId);
+  if (!chunk) return;
+
+  const groups = await BilibanStorage.getGroups();
+  const chunkGroups = groups.filter(g => g.chunkId === chunkId);
+
+  const result = await showChunkModal('编辑块', `
+    <label>块名称</label>
+    <input type="text" id="chunk-name-input" value="${chunk.name}">
+    <label style="margin-top:12px">包含的分组</label>
+    <div class="group-assign-list">
+      ${groups.map(g => `
+        <div class="group-assign-item">
+          <input type="checkbox" class="group-assign-checkbox" data-group-id="${g.id}" 
+            ${g.chunkId === chunkId ? 'checked' : ''}>
+          <span class="group-assign-name">${g.name}</span>
+          <span class="group-assign-count">${g.uids.length} 人</span>
+        </div>
+      `).join('')}
+    </div>
+  `, async () => {
+    const newName = document.getElementById('chunk-name-input').value.trim();
+    if (!newName) return null;
+
+    await BilibanStorage.renameChunk(chunkId, newName);
+
+    // 更新分组归属
+    const checkboxes = document.querySelectorAll('.group-assign-checkbox');
+    for (const cb of checkboxes) {
+      const groupId = cb.dataset.groupId;
+      if (cb.checked) {
+        await BilibanStorage.moveGroupToChunk(groupId, chunkId);
+      } else {
+        const group = groups.find(g => g.id === groupId);
+        if (group && group.chunkId === chunkId) {
+          await BilibanStorage.moveGroupToChunk(groupId, null);
+        }
+      }
+    }
+
+    return { name: newName };
+  });
+
+  if (result !== null) {
+    await renderChunks();
+    render();
+    showToast('✅ 块已更新');
+  }
+}
+
+// 移动分组到块
+async function showMoveGroupDialog(groupId) {
+  const chunks = await BilibanStorage.getChunks();
+  const groups = await BilibanStorage.getGroups();
+  const group = groups.find(g => g.id === groupId);
+  if (!group) return;
+
+  const result = await showModal('移动到块', `
+    <p>将「${group.name}」移动到：</p>
+    <div style="margin-top:12px">
+      <label style="display:flex;align-items:center;gap:8px;padding:8px;cursor:pointer;border-radius:6px;background:#404040;margin-bottom:4px">
+        <input type="radio" name="move-chunk" value="" ${!group.chunkId ? 'checked' : ''}>
+        <span>未分组</span>
+      </label>
+      ${chunks.map(c => `
+        <label style="display:flex;align-items:center;gap:8px;padding:8px;cursor:pointer;border-radius:6px;background:#404040;margin-bottom:4px">
+          <input type="radio" name="move-chunk" value="${c.id}" ${group.chunkId === c.id ? 'checked' : ''}>
+          <span>${c.name}</span>
+        </label>
+      `).join('')}
+    </div>
+  `, async () => {
+    const selectedChunk = document.querySelector('input[name="move-chunk"]:checked');
+    const chunkId = selectedChunk ? selectedChunk.value || null : null;
+    await BilibanStorage.moveGroupToChunk(groupId, chunkId);
+    return true;
+  });
+
+  if (result !== null) {
+    render();
+    showToast('✅ 分组已移动');
+  }
+}
+
+// 推送选中的块
+btnPushSelected.addEventListener('click', async () => {
+  if (selectedChunkIds.size === 0) return;
+
+  btnPushSelected.disabled = true;
+  chunkSyncStatus.textContent = '推送中...';
+  chunkSyncStatus.className = 'github-hint github-status-loading';
+
+  try {
+    const chunks = await BilibanStorage.getChunks();
+    const results = [];
+
+    for (const chunkId of selectedChunkIds) {
+      const chunk = chunks.find(c => c.id === chunkId);
+      if (!chunk) continue;
+
+      const chunkData = await BilibanStorage.getChunkData(chunkId);
+      const result = await BilibanGithubSync.pushChunk(chunk.name, chunkData);
+      results.push(result);
+    }
+
+    chunkSyncStatus.textContent = `✓ 已推送 ${results.length} 个块`;
+    chunkSyncStatus.className = 'github-hint github-status-ok';
+    showToast(`✅ 已推送 ${results.length} 个块到云端`);
+  } catch (e) {
+    chunkSyncStatus.textContent = '✗ ' + e.message;
+    chunkSyncStatus.className = 'github-hint github-status-err';
+  }
+
+  btnPushSelected.disabled = false;
+});
+
+// 拉取选中的块
+btnPullSelected.addEventListener('click', async () => {
+  if (selectedChunkIds.size === 0) return;
+
+  const chunks = await BilibanStorage.getChunks();
+  const selectedChunks = chunks.filter(c => selectedChunkIds.has(c.id));
+  
+  const result = await showModal('拉取选中块', `
+    <p>将从云端拉取以下块并<strong>覆盖</strong>本地对应块的分组：</p>
+    <ul style="margin-top:8px;padding-left:20px">
+      ${selectedChunks.map(c => `<li>${c.name}</li>`).join('')}
+    </ul>
+    <p style="margin-top:12px;color:#ff4d4f">⚠️ 这将替换本地这些块下的所有分组数据</p>
+  `, async () => {
+    btnPullSelected.disabled = true;
+    chunkSyncStatus.textContent = '拉取中...';
+    chunkSyncStatus.className = 'github-hint github-status-loading';
+
+    try {
+      const results = [];
+
+      for (const chunk of selectedChunks) {
+        try {
+          const pullResult = await BilibanGithubSync.pullChunk(chunk.name);
+          await BilibanStorage.importChunkData(pullResult.data, chunk.id, 'replace');
+          results.push(chunk.name);
+        } catch (e) {
+          console.error(`拉取块 ${chunk.name} 失败:`, e);
+        }
+      }
+
+      chunkSyncStatus.textContent = `✓ 已拉取 ${results.length} 个块`;
+      chunkSyncStatus.className = 'github-hint github-status-ok';
+      showToast(`✅ 已拉取 ${results.length} 个块`);
+      render();
+    } catch (e) {
+      chunkSyncStatus.textContent = '✗ ' + e.message;
+      chunkSyncStatus.className = 'github-hint github-status-err';
+    }
+
+    btnPullSelected.disabled = false;
+  });
+});
+
 // ==================== 添加用户 ====================
 
 btnAdd.addEventListener('click', async () => {
@@ -310,11 +654,22 @@ inputUid.addEventListener('keydown', (e) => { if (e.key === 'Enter') btnAdd.clic
 // ==================== 新建分组 ====================
 
 btnAddGroup.addEventListener('click', async () => {
+  const chunks = await BilibanStorage.getChunks();
   const result = await showModal('新建分组',
-    '<p>输入分组名称：</p><input type="text" id="new-group-name" placeholder="如：杠精、广告号...">',
+    `<p>输入分组名称：</p>
+     <input type="text" id="new-group-name" placeholder="如：杠精、广告号...">
+     <p style="margin-top:12px">选择所属块（可选）：</p>
+     <select id="new-group-chunk" style="width:100%;height:34px;padding:0 8px;border:1.5px solid #555;border-radius:6px;font-size:13px;background:#404040;color:#e0e0e0;outline:none;margin-top:8px">
+       <option value="">不分配块</option>
+       ${chunks.map(c => `<option value="${c.id}">${c.name}</option>`).join('')}
+     </select>`,
     async () => {
       const input = document.getElementById('new-group-name');
-      if (input.value.trim()) await BilibanStorage.addGroup(input.value.trim());
+      const chunkSelect = document.getElementById('new-group-chunk');
+      if (input.value.trim()) {
+        const group = await BilibanStorage.addGroup(input.value.trim(), chunkSelect.value || null);
+        return group;
+      }
     });
   if (result !== null) render();
 });
@@ -404,11 +759,18 @@ async function checkGithubToken() {
     githubTokenStatus.className = 'github-hint github-status-ok';
     githubSyncSection.style.display = 'block';
     githubUserInfo.textContent = '👤 ' + result.username;
+    
+    // 渲染分块列表
+    await renderChunks();
+    
     const status = await BilibanGithubSync.getSyncStatus();
     if (status.synced) {
-      githubSyncStatus.textContent = '上次同步: ' + new Date(status.updatedAt).toLocaleString();
+      githubSyncStatus.textContent = status.message || '上次同步: ' + new Date(status.updatedAt).toLocaleString();
       githubSyncStatus.className = 'github-hint github-status-ok';
-      githubLink.style.display = 'block'; githubLinkUrl.href = status.url;
+      githubLink.style.display = 'block';
+      if (status.chunks && status.chunks.length > 0) {
+        githubLinkUrl.href = status.chunks[0].url;
+      }
     } else {
       githubSyncStatus.textContent = status.reason || '未同步'; githubSyncStatus.className = 'github-hint';
       githubLink.style.display = 'none';
@@ -421,7 +783,7 @@ async function checkGithubToken() {
 }
 githubTokenSave.addEventListener('click', checkGithubToken);
 
-// 推送
+// 推送全部
 githubPush.addEventListener('click', async () => {
   githubPush.disabled = true; githubSyncStatus.textContent = '推送中...';
   githubSyncStatus.className = 'github-hint github-status-loading';
@@ -438,7 +800,7 @@ githubPush.addEventListener('click', async () => {
   githubPush.disabled = false;
 });
 
-// 拉取
+// 拉取全部
 githubPull.addEventListener('click', async () => {
   const result = await showModal('从云端恢复', '<p>这将用云端数据<strong>覆盖</strong>本地黑名单。确定继续？</p>',
     async () => {
@@ -497,6 +859,10 @@ sourceAdd.addEventListener('click', async () => {
     const url = `https://raw.githubusercontent.com/${parsed.owner}/${parsed.repo}/${parsed.branch}/${parsed.path}`;
     const resp = await fetch(url);
     if (!resp.ok) throw new Error('文件不存在或仓库不可访问 (' + resp.status + ')');
+
+    // 尝试获取仓库的块列表
+    const chunks = await BilibanStorage.fetchSourceChunks(parsed);
+    parsed.chunks = chunks;
 
     await BilibanStorage.addSource(parsed);
     sourceInput.value = '';
@@ -557,14 +923,74 @@ async function renderSources() {
         <div class="source-name">${s.owner}/${s.repo}</div>
         <div class="source-path">${s.path} @ ${s.branch}</div>
       </div>
+      ${s.chunks && s.chunks.length > 0 ? `
+        <button class="source-chunks-toggle" data-source-id="${s.id}" title="查看块">▼</button>
+      ` : ''}
       <button class="source-remove" data-source-id="${s.id}" title="移除">✕</button>
     </div>
+    ${s.chunks && s.chunks.length > 0 ? `
+      <div class="source-chunks" id="source-chunks-${s.id}">
+        ${s.chunks.map(c => `
+          <div class="source-chunk-item">
+            <span class="source-chunk-name">${c.name}</span>
+            <button class="source-chunk-pull" data-source-id="${s.id}" data-chunk-path="${c.path}">拉取</button>
+          </div>
+        `).join('')}
+      </div>
+    ` : ''}
   `).join('');
 
+  // 绑定事件
   sourceList.querySelectorAll('.source-remove').forEach(btn => {
     btn.addEventListener('click', async () => {
       await BilibanStorage.removeSource(btn.dataset.sourceId);
       await renderSources();
+    });
+  });
+
+  sourceList.querySelectorAll('.source-chunks-toggle').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const chunksEl = document.getElementById('source-chunks-' + btn.dataset.sourceId);
+      if (chunksEl) {
+        chunksEl.classList.toggle('expanded');
+        btn.classList.toggle('expanded');
+      }
+    });
+  });
+
+  sourceList.querySelectorAll('.source-chunk-pull').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const sourceId = btn.dataset.sourceId;
+      const chunkPath = btn.dataset.chunkPath;
+      const source = sources.find(s => s.id === sourceId);
+      if (!source) return;
+
+      btn.disabled = true;
+      btn.textContent = '拉取中...';
+
+      try {
+        const data = await BilibanStorage.pullChunkFromSource(source, chunkPath);
+        
+        // 创建一个新块来存放拉取的数据
+        const chunkName = chunkPath.replace('.json', '').split('/').pop();
+        const chunks = await BilibanStorage.getChunks();
+        let targetChunk = chunks.find(c => c.name === chunkName);
+        
+        if (!targetChunk) {
+          targetChunk = await BilibanStorage.addChunk(chunkName, `来自 ${source.owner}/${source.repo}`);
+        }
+
+        await BilibanStorage.importChunkData(data, targetChunk.id, 'merge');
+        
+        showToast(`✅ 已从块「${chunkName}」拉取数据`);
+        render();
+        await renderChunks();
+      } catch (e) {
+        showToast('❌ 拉取失败: ' + e.message);
+      }
+
+      btn.disabled = false;
+      btn.textContent = '拉取';
     });
   });
 }
@@ -616,4 +1042,3 @@ function showToast(msg) {
 }
 
 initPowerMode();
-
