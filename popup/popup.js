@@ -447,8 +447,23 @@ async function renderChunks() {
       }
 
       if (action === 'delete') {
-        const result = await showModal('删除分块', '<p>确定要删除这个块吗？块内的分组不会被删除，只会取消分组归属。</p>',
-          async () => { await BilibanStorage.removeChunk(chunkId); });
+        const allChunks = await BilibanStorage.getChunks();
+        const chunk = allChunks.find(c => c.id === chunkId);
+        const result = await showModal('删除分块',
+          '<p>确定要删除这个块吗？块内的分组不会被删除，只会取消分组归属。</p>' +
+          '<p style="margin-top:8px">☁️ 若已配置 GitHub 同步，云端对应的备份文件也会一并删除。</p>',
+          async () => {
+            await BilibanStorage.removeChunk(chunkId);
+            // 云端联动清理（尽力而为，失败不影响本地删除）
+            if (chunk) {
+              try {
+                const del = await BilibanGithubSync.deleteChunk(chunk);
+                if (del.deleted) showToast('☁️ ' + del.message);
+              } catch (e) {
+                showToast('⚠️ 云端文件删除失败: ' + e.message);
+              }
+            }
+          });
         if (result !== null) {
           selectedChunkIds.delete(chunkId);
           await renderChunks();
@@ -517,6 +532,7 @@ async function showEditChunkDialog(chunkId) {
   const result = await showChunkModal('编辑块', `
     <label>块名称</label>
     <input type="text" id="chunk-name-input" value="${chunk.name}">
+    <p style="margin-top:4px;font-size:12px;color:#999">重命名仅影响本地；云端文件名将在下次推送时自动跟随更新，旧文件随之清理</p>
     <label style="margin-top:12px">包含的分组</label>
     <div class="group-assign-list">
       ${groups.map(g => `
@@ -608,8 +624,8 @@ btnPushSelected.addEventListener('click', async () => {
       const chunk = chunks.find(c => c.id === chunkId);
       if (!chunk) continue;
 
-      const chunkData = await BilibanStorage.getChunkData(chunkId);
-      const result = await BilibanGithubSync.pushChunk(chunk.name, chunkData);
+      const chunkData = await BilibanStorage.getChunkData(chunk.id);
+      const result = await BilibanGithubSync.pushChunk(chunk, chunkData);
       results.push(result);
     }
 
@@ -636,6 +652,7 @@ btnPullSelected.addEventListener('click', async () => {
     <ul style="margin-top:8px;padding-left:20px">
       ${selectedChunks.map(c => `<li>${c.name}</li>`).join('')}
     </ul>
+    <p style="margin-top:12px">🔄 块身份（ID）与名称以云端备份为准对齐，云端重命名会同步到本地</p>
     <p style="margin-top:12px;color:#ff4d4f">⚠️ 这将替换本地这些块下的所有分组数据</p>
   `, async () => {
     btnPullSelected.disabled = true;
@@ -644,21 +661,44 @@ btnPullSelected.addEventListener('click', async () => {
 
     try {
       const results = [];
+      const failures = [];
 
       for (const chunk of selectedChunks) {
         try {
-          const pullResult = await BilibanGithubSync.pullChunk(chunk.name);
+          const pullResult = await BilibanGithubSync.pullChunk(chunk);
+
+          // 云端 chunkId 为准：对齐本地块身份（跨设备同步的关键）
+          if (pullResult.chunkId && pullResult.chunkId !== chunk.id) {
+            const adopted = await BilibanStorage.adoptChunkId(chunk.id, pullResult.chunkId);
+            if (adopted) chunk.id = pullResult.chunkId;
+          }
+
+          // 云端块名同步到本地（重命名随拉取传播）
+          if (pullResult.chunkName && pullResult.chunkName !== chunk.name) {
+            await BilibanStorage.renameChunk(chunk.id, pullResult.chunkName);
+            chunk.name = pullResult.chunkName;
+          }
+
           await BilibanStorage.importChunkData(pullResult.data, chunk.id, 'replace');
           results.push(chunk.name);
         } catch (e) {
           console.error(`拉取块 ${chunk.name} 失败:`, e);
+          failures.push(chunk.name);
         }
       }
 
-      chunkSyncStatus.textContent = `✓ 已拉取 ${results.length} 个块`;
-      chunkSyncStatus.className = 'github-hint github-status-ok';
-      showToast(`✅ 已拉取 ${results.length} 个块`);
+      if (results.length > 0) {
+        let msg = `✓ 已拉取 ${results.length} 个块`;
+        if (failures.length > 0) msg += `，${failures.length} 个失败`;
+        chunkSyncStatus.textContent = msg;
+        chunkSyncStatus.className = failures.length > 0 ? 'github-hint github-status-err' : 'github-hint github-status-ok';
+        showToast(`✅ 已拉取 ${results.length} 个块`);
+      } else {
+        chunkSyncStatus.textContent = '✗ 拉取失败：云端未找到所选块';
+        chunkSyncStatus.className = 'github-hint github-status-err';
+      }
       render();
+      await renderChunks();
     } catch (e) {
       chunkSyncStatus.textContent = '✗ ' + e.message;
       chunkSyncStatus.className = 'github-hint github-status-err';
