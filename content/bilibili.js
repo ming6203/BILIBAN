@@ -82,7 +82,7 @@
     // 注入选择器样式
     injectPickerStyles(document);
 
-    new MutationObserver(() => { scanAll(); checkSpaceBlacklist(); }).observe(document.body, {
+    new MutationObserver(() => { handleDomMutation(); }).observe(document.body, {
       childList: true, subtree: true
     });
 
@@ -90,6 +90,7 @@
 
     // Initial scan for elements already in DOM
     scanAll();
+    startWatchingComments();
     setTimeout(scanAll, 500);
     setTimeout(scanAll, 1500);
 
@@ -126,11 +127,14 @@
   }
 
   function watchGateGrid() {
+    let attempts = 0;
     const check = () => {
+      let found = false;
       const grid = document.querySelector('.bilibili-gate-video-grid')
         || document.querySelector('.bewly-grid')
         || document.querySelector('[class*="bewly"]');
       if (grid) {
+        found = true;
         new MutationObserver(() => scanAll()).observe(grid, {
           childList: true, subtree: true
         });
@@ -139,11 +143,13 @@
       // Watch BewlyBewly Shadow DOM
       const sr = getBewlyShadowRoot();
       if (sr) {
+        found = true;
         new MutationObserver(() => scanAll()).observe(sr, {
           childList: true, subtree: true
         });
       } else {
-        setTimeout(check, 1000);
+        // 未找到则限次重试，避免在普通页面无休止轮询（getBewlyShadowRoot 暴力扫描开销大）
+        if (++attempts < 20) setTimeout(check, 1000);
       }
     };
     check();
@@ -156,13 +162,22 @@
 
   // ==================== BewlyBewly Shadow DOM ====================
 
+  let _bewlyCache = null;
+  let _bewlyCheckedAt = 0;
+
   function getBewlyShadowRoot() {
+    const now = Date.now();
+    // 缓存结果，避免每次扫描都暴力遍历整个文档（非 BewlyBewly 页面尤其浪费）
+    if (_bewlyCheckedAt > 0 && now - _bewlyCheckedAt < 3000) return _bewlyCache;
+    _bewlyCheckedAt = now;
+    _bewlyCache = null;
+
     // Try multiple selectors
     const selectors = ['.dark.disable-frosted-glass', '.disable-frosted-glass', '[class*="disable-frosted"]', '[class*="frosted-glass"]'];
     for (const sel of selectors) {
       const host = document.querySelector(sel);
       if (host && host.shadowRoot) {
-        return host.shadowRoot;
+        return _bewlyCache = host.shadowRoot;
       }
     }
     // Brute force: check all elements with shadowRoot
@@ -172,11 +187,11 @@
         const cards = el.shadowRoot.querySelectorAll('.video-card');
         if (cards.length > 0) {
           console.log('[BILIBAN] Found Shadow DOM via brute force: ' + el.tagName + '.' + el.className.substring(0, 40) + ' cards=' + cards.length);
-          return el.shadowRoot;
+          return _bewlyCache = el.shadowRoot;
         }
       }
     }
-    return null;
+    return _bewlyCache;
   }
 
   let _scanPending = false;
@@ -190,6 +205,123 @@
       processVideoCards();
       processBewlyCards();
       processSpacePage();
+    });
+  }
+  // ==================== 增量扫描调度 ====================
+
+  let _scanTimer = null;
+  function scheduleIncrementalScan() {
+    if (_scanTimer) return;
+    _scanTimer = setTimeout(() => {
+      _scanTimer = null;
+      processVideoCards();
+      processBewlyCards();
+      processSpacePage();
+      checkSpaceBlacklist();
+    }, 120);
+  }
+
+  function handleDomMutation() {
+    startWatchingComments();
+    scheduleIncrementalScan();
+  }
+
+  // ==================== 评论区增量监听 ====================
+
+  const observedRoots = new WeakSet();
+  const handledThreads = new WeakSet();
+  const handledReplies = new WeakSet();
+
+  function observeOnce(target, handler) {
+    if (!target) return;
+    if (observedRoots.has(target)) return;
+    observedRoots.add(target);
+    new MutationObserver((muts) => handler(muts)).observe(target, { childList: true, subtree: true });
+  }
+
+  // 从 mutation 记录中只收集新增的匹配节点，避免全量 querySelectorAll
+  function collectAdded(mutations, selector) {
+    const out = [];
+    for (const mut of mutations) {
+      for (const node of mut.addedNodes) {
+        if (node.nodeType !== 1) continue;
+        if (node.matches && node.matches(selector)) out.push(node);
+        if (node.querySelectorAll) {
+          const found = node.querySelectorAll(selector);
+          for (let i = 0; i < found.length; i++) out.push(found[i]);
+        }
+      }
+    }
+    return out;
+  }
+
+  function handleCommentRenderer(renderer) {
+    if (!renderer || renderer[DONE]) return;
+    if (!renderer.shadowRoot) {
+      if (!renderer.__bibanRetry) {
+        renderer.__bibanRetry = true;
+        setTimeout(() => { renderer.__bibanRetry = false; handleCommentRenderer(renderer); }, 200);
+      }
+      return;
+    }
+    processCommentRenderer(renderer);
+    // UID 尚未渲染出来时，监听其自身 shadow，就绪后补注入
+    if (!renderer[DONE] && !renderer.__bibanLateWatch) {
+      renderer.__bibanLateWatch = true;
+      observeOnce(renderer.shadowRoot, () => { if (!renderer[DONE]) processCommentRenderer(renderer); });
+    }
+  }
+
+  function handleReplyRenderer(r) {
+    if (!r || r[DONE]) return;
+    processReplyRenderer(r);
+    // UID 尚未渲染出来时，监听其自身 shadow，就绪后补注入
+    if (!r[DONE] && r.shadowRoot && !r.__bibanLateWatch) {
+      r.__bibanLateWatch = true;
+      observeOnce(r.shadowRoot, () => { if (!r[DONE]) processReplyRenderer(r); });
+    }
+  }
+
+  function handleRepliesContainer(replies) {
+    if (!replies || !replies.shadowRoot) return;
+    // 处理已存在的回复
+    replies.shadowRoot.querySelectorAll('bili-comment-reply-renderer').forEach(handleReplyRenderer);
+    if (!handledReplies.has(replies)) {
+      handledReplies.add(replies);
+      observeOnce(replies.shadowRoot, (muts) => {
+        collectAdded(muts, 'bili-comment-reply-renderer').forEach(handleReplyRenderer);
+      });
+    }
+  }
+
+  function handleThread(thread) {
+    if (!thread || handledThreads.has(thread)) return;
+    if (!thread.shadowRoot) {
+      if (!thread.__bibanRetry) {
+        thread.__bibanRetry = true;
+        setTimeout(() => { thread.__bibanRetry = false; handleThread(thread); }, 200);
+      }
+      return;
+    }
+    handledThreads.add(thread);
+
+    handleCommentRenderer(thread.shadowRoot.querySelector('bili-comment-renderer'));
+    handleRepliesContainer(thread.shadowRoot.querySelector('bili-comment-replies-renderer'));
+
+    observeOnce(thread.shadowRoot, (muts) => {
+      collectAdded(muts, 'bili-comment-renderer').forEach(handleCommentRenderer);
+      collectAdded(muts, 'bili-comment-replies-renderer').forEach(handleRepliesContainer);
+    });
+  }
+
+  function startWatchingComments() {
+    const bc = document.querySelector('bili-comments');
+    if (!bc || bc.__bibanRootWatched) return;
+    if (!bc.shadowRoot) return;
+    bc.__bibanRootWatched = true;
+    bc.shadowRoot.querySelectorAll('bili-comment-thread-renderer').forEach(handleThread);
+    observeOnce(bc.shadowRoot, (muts) => {
+      collectAdded(muts, 'bili-comment-thread-renderer').forEach(handleThread);
     });
   }
 
@@ -259,26 +391,21 @@
       return;
     }
 
-    // Place button next to username in bili-comment-user-info
-    const userInfo = shadow.querySelector('bili-comment-user-info');
+    // 与回复评论按钮保持一致：按钮放在 bili-comment-user-info 之后
+    if (shadow.querySelector('.biliban-block-btn')) return;
 
-    // 检查按钮是否已存在（按钮可能在嵌套的 shadow DOM 中）
-    if (deepQuerySelector(shadow, '.biliban-block-btn')) return;
+    injectBlockBtnStyles(shadow);
 
     const btn = document.createElement('button');
     btn.className = 'biliban-block-btn';
     btn.textContent = '屏蔽';
     btn.title = '屏蔽用户 ' + uid;
     btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); showGroupPicker(btn, uid); });
-    if (userInfo && userInfo.shadowRoot) {
-      injectBlockBtnStyles(userInfo.shadowRoot);
-      const userName = userInfo.shadowRoot.querySelector('.user-name') || userInfo.shadowRoot.querySelector('a');
-      if (userName) {
-        const nameParent = userName.parentElement || userName;
-        nameParent.classList.add('biliban-no-wrap');
-        userName.after(btn);
-        return;
-      }
+
+    const userInfo = shadow.querySelector('bili-comment-user-info');
+    if (userInfo) {
+      userInfo.after(btn);
+      return;
     }
 
     // Fallback: #header
@@ -987,7 +1114,9 @@
     _lastCheckedSpaceUid = null;
     checkSpaceBlacklist();
 
-    document.querySelectorAll('[data-' + DONE + ']').forEach(el => delete el.dataset[DONE]);
+    document.querySelectorAll(CARD_SELECTORS).forEach(el => delete el[DONE]);
+    const _bewlySr = getBewlyShadowRoot();
+    if (_bewlySr) _bewlySr.querySelectorAll('.video-card').forEach(el => delete el[DONE]);
 
     const bc = document.querySelector('bili-comments');
     if (bc && bc.shadowRoot) {
