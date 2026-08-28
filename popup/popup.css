@@ -29,6 +29,7 @@ body {
 
 .logo { display: flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 700; }
 .logo-icon { font-size: 22px; }
+.header-left { display: flex; align-items: center; gap: 8px; }
 .header-actions { display: flex; gap: 4px; }
 
 .icon-btn {
@@ -45,12 +46,12 @@ body {
 }
 .icon-btn-sm:hover { background: #404040; color: #e0e0e0; }
 
-/* ==================== GitHub 面板 ==================== */
+/* ==================== GitHub 面板（常驻，占满弹窗剩余空间） ==================== */
 .github-panel {
+  flex: 1; min-height: 0;
   background: #363636;
   border-bottom: 1px solid #4a4a4a;
   padding: 12px 16px;
-  max-height: 400px;
   overflow-y: auto;
 }
 
@@ -582,12 +583,6 @@ body {
 .empty-group { text-align: center; color: #777; font-size: 12px; padding: 12px 0; }
 
 /* ==================== 底部栏 ==================== */
-.footer {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 16px; background: #363636; border-top: 1px solid #4a4a4a;
-}
-
-.stats { font-size: 12px; color: #888; }
 
 /* ==================== 模态框 ==================== */
 .modal-overlay {

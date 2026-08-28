@@ -7,7 +7,6 @@
   'use strict';
 
   let blockedUids = new Set();
-  let powerScanInterval = null;
   const DONE = '__biban_done';
 
   const CARD_SELECTORS = [
@@ -99,31 +98,6 @@
     setTimeout(checkSpaceBlacklist, 1000);
     setTimeout(checkSpaceBlacklist, 3000);
     setInterval(checkSpaceBlacklist, 2000);
-
-    // Power mode: check saved state and listen for changes
-    chrome.storage.local.get('biliban_power_mode', function(result) {
-      if (result.biliban_power_mode) startPowerScan();
-    });
-    chrome.storage.onChanged.addListener(function(changes, area) {
-      if (area === 'local' && changes.biliban_power_mode) {
-        if (changes.biliban_power_mode.newValue) startPowerScan();
-        else stopPowerScan();
-      }
-    });
-  }
-
-  function startPowerScan() {
-    if (powerScanInterval) return;
-    powerScanInterval = setInterval(function() { scanAll(); }, 500);
-    console.log('[BILIBAN] 强力屏蔽模式已开启');
-  }
-
-  function stopPowerScan() {
-    if (powerScanInterval) {
-      clearInterval(powerScanInterval);
-      powerScanInterval = null;
-      console.log('[BILIBAN] 强力屏蔽模式已关闭');
-    }
   }
 
   function watchGateGrid() {

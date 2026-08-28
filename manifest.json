@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "BILIBAN - B站用户屏蔽",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "屏蔽B站指定用户的弹幕、评论、推荐、搜索和动态",
   "permissions": [
     "storage",
@@ -14,6 +14,10 @@
       "48": "icons/icon48.png",
       "128": "icons/icon128.png"
     }
+  },
+  "options_ui": {
+    "page": "manage/manage.html",
+    "open_in_tab": true
   },
   "icons": {
     "16": "icons/icon16.png",
@@ -49,19 +53,11 @@
         "content/blocker.css"
       ],
       "run_at": "document_idle"
-    },
-    {
-      "matches": [
-        "*://*.bilibili.com/*",
-        "*://bilibili.com/*"
-      ],
-      "js": [
-        "content/infinite-scroll.js"
-      ],
-      "run_at": "document_idle"
     }
   ],
   "host_permissions": [
-    "https://api.github.com/*"
+    "https://api.github.com/*",
+    "https://api.bilibili.com/*",
+    "*://*.bilibili.com/*"
   ]
 }

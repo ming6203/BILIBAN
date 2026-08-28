@@ -1,9 +1,16 @@
 ﻿/**
  * BILIBAN Background Service Worker
- * 监听存储变化，通知 content script 刷新
+ *
+ * 职责：
+ *  1. 监听存储变化，通知所有 bilibili.com 标签页刷新
+ *  2. 评论爬取扫描的调度中枢：接收管理页指令 (start/stop/status)，
+ *     在后台发起分页请求、执行黑名单匹配，并将进度/结果实时推送给管理页
  */
 
-// 当 Popup 修改了存储后，通知所有标签页刷新
+importScripts('comment-crawler.js');
+
+// ==================== 存储变更 → 广播刷新 ====================
+
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.biliban_blacklist) {
     // 通知所有 bilibili.com 标签页
@@ -15,7 +22,38 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
-// 安装时初始化
+// ==================== 评论扫描消息路由 ====================
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!msg || typeof msg.type !== 'string' || !msg.type.startsWith('BILIBAN_SCAN_')) {
+    return; // 不处理与扫描无关的消息
+  }
+
+  if (msg.type === 'BILIBAN_SCAN_START') {
+    BilibanCrawler.startScan(msg.videoRef, msg.options).then(sendResponse);
+    return true; // 异步响应
+  }
+
+  if (msg.type === 'BILIBAN_SCAN_STOP') {
+    BilibanCrawler.stopScan().then(sendResponse);
+    return true;
+  }
+
+  if (msg.type === 'BILIBAN_SCAN_STATUS') {
+    BilibanCrawler.getStatus().then(sendResponse);
+    return true;
+  }
+
+  if (msg.type === 'BILIBAN_SCAN_RESET') {
+    BilibanCrawler.resetState().then(() => sendResponse({ ok: true }));
+    return true;
+  }
+
+  return false;
+});
+
+// ==================== 安装时初始化 ====================
+
 chrome.runtime.onInstalled.addListener((details) => {
   console.log('[BILIBAN] 插件已安装/更新', details.reason);
   chrome.storage.local.get('biliban_blacklist', (result) => {

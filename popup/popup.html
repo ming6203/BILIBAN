@@ -10,23 +10,23 @@
   <div class="app">
     <!-- 顶部标题栏 -->
     <header class="header">
-      <div class="logo">
-        <span class="logo-icon">🚫</span>
-        <span class="logo-text">BILIBAN</span>
+      <div class="header-left">
+        <div class="logo">
+          <span class="logo-icon">🚫</span>
+          <span class="logo-text">BILIBAN</span>
+        </div>
+        <button id="btn-manage" class="icon-btn" title="打开完整管理面板">⚙️</button>
       </div>
       <div class="header-actions">
-        <button id="btn-import" class="icon-btn" title="导入本地文件">📥</button>
-        <button id="btn-export" class="icon-btn" title="导出本地文件">📤</button>
-        <button id="btn-power" class="icon-btn" title="强力屏蔽模式">🛡️</button>
-        <button id="btn-github" class="icon-btn" title="GitHub 云端同步">☁️</button>
+        <button id="btn-import" class="icon-btn" title="导入本地备份">📥</button>
+        <button id="btn-export" class="icon-btn" title="导出本地备份">📤</button>
       </div>
     </header>
 
-    <!-- GitHub 同步面板 -->
-    <div class="github-panel" id="github-panel" style="display:none">
+    <!-- GitHub 同步面板（弹窗即云同步界面，常驻展示） -->
+    <div class="github-panel" id="github-panel">
       <div class="github-panel-header">
         <span class="github-title">☁️ 云端 & 订阅</span>
-        <button id="github-close" class="icon-btn-sm">✕</button>
       </div>
 
       <!-- Tab 切换 -->
@@ -39,12 +39,12 @@
       <div class="github-tab-content" id="tab-sync">
         <div class="github-section" id="github-sync-section" style="display:none">
           <div class="github-user" id="github-user-info"></div>
-          
-          <!-- 分块管理 -->
+
+          <!-- 分块同步（新建/编辑分块请到完整管理面板） -->
           <div class="chunk-section">
             <div class="chunk-header">
               <label class="github-label">云端分块</label>
-              <button id="btn-add-chunk" class="primary-btn-sm">+ 新建块</button>
+              <span class="github-hint" style="margin-top:0">编辑分块请到管理面板</span>
             </div>
             <div class="chunk-list" id="chunk-list"></div>
             <div class="chunk-actions">
@@ -118,45 +118,6 @@
         </div>
       </div>
     </div>
-
-    <!-- 分块管理弹窗 -->
-    <div class="chunk-modal-overlay" id="chunk-modal-overlay" style="display:none">
-      <div class="chunk-modal">
-        <div class="chunk-modal-header">
-          <span class="chunk-modal-title" id="chunk-modal-title">管理分块</span>
-          <button class="icon-btn-sm" id="chunk-modal-close">✕</button>
-        </div>
-        <div class="chunk-modal-body" id="chunk-modal-body"></div>
-        <div class="chunk-modal-footer">
-          <button class="secondary-btn" id="chunk-modal-cancel">取消</button>
-          <button class="primary-btn" id="chunk-modal-confirm">确认</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- 添加用户区域 -->
-    <div class="add-section">
-      <div class="input-row">
-        <input type="text" id="input-uid" placeholder="输入 UID" inputmode="numeric">
-        <select id="select-group"></select>
-        <button id="btn-add" class="primary-btn">添加</button>
-      </div>
-      <div class="error-msg" id="error-msg"></div>
-    </div>
-
-    <!-- 分组列表 -->
-    <div class="groups-container" id="groups-container">
-      <div class="empty-state" id="empty-state">
-        <div class="empty-icon">📋</div>
-        <div class="empty-text">还没有屏蔽分组<br>点击下方按钮创建第一个分组</div>
-      </div>
-    </div>
-
-    <!-- 底部操作栏 -->
-    <footer class="footer">
-      <button id="btn-add-group" class="secondary-btn">+ 新建分组</button>
-      <div class="stats" id="stats"></div>
-    </footer>
   </div>
 
   <!-- 隐藏的文件导入 -->
