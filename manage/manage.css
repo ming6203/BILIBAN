@@ -304,9 +304,9 @@ body {
 .thread-card:last-child { border-bottom: none; }
 .thread-card:hover { background: #3a3a3a; }
 .thread-card.ignored { opacity: 0.45; }
-/* 未命中搜索：置灰但仍可见完整内容 */
-.thread-card.muted { opacity: 0.45; }
-.thread-card.muted .thread-content { color: #999; }
+/* 行级灰显：未命中搜索的评论（主楼或回复各自独立）可见但置灰、不可批量选择 */
+.thread-row.muted { opacity: 0.5; }
+.thread-row.muted .thread-content { color: #999; }
 
 .thread-row { display: flex; align-items: flex-start; gap: 10px; }
 

@@ -117,6 +117,12 @@ async function render() {
   const chunks = await BilibanStorage.getChunks();
   const expandState = await BilibanStorage.getChunkExpandState();
 
+  // 记录当前已展开的分组（group-card 的展开态未持久化，重渲染后会丢失，
+  // 若在此记录、渲染完成后恢复，可避免删除 uid 等操作导致分组自动收起）
+  const expandedGroups = new Set(
+    Array.from(document.querySelectorAll('.group-card.expanded')).map(c => c.dataset.groupId)
+  );
+
   groupsContainer.innerHTML = '';
 
   if (groups.length === 0) {
@@ -219,6 +225,13 @@ async function render() {
   let totalUids = new Set();
   for (const g of groups) g.uids.forEach(uid => totalUids.add(uid));
   statsEl.textContent = `${groups.length} 个分组 · ${totalUids.size} 个用户 · ${chunks.length} 个分块`;
+
+  // 恢复渲染前已展开的分组，避免删除 uid 等操作导致分组自动收起
+  if (expandedGroups.size > 0) {
+    document.querySelectorAll('.group-card').forEach(c => {
+      if (expandedGroups.has(c.dataset.groupId)) c.classList.add('expanded');
+    });
+  }
 
   bindEvents();
   renderChunkManageButtons();
@@ -906,16 +919,19 @@ function annotateThread(t, uidGroupMap) {
   return { matched, groups: [...groupsSet] };
 }
 
-// 搜索匹配：命中主楼内容 / 主楼用户名 / 任一回复内容或用户名 即视为命中
+// 单条评论（主楼或回复）是否命中搜索：仅依据该条自身内容与用户名
+// keywords 为空时全部命中（无搜索态）
+function computeRowHit(comment, keywords) {
+  if (!keywords || keywords.length === 0) return true;
+  const haystack = [comment.content || '', comment.uname || ''].join('\n').toLowerCase();
+  return keywords.some(kw => haystack.includes(kw));
+}
+
+// 线程级是否命中：主楼或任一回复命中即视为命中（用于线程排序置顶/沉底）
 // keywords 为空时全部命中（无搜索态）
 function computeSearchHit(thread, keywords) {
   if (!keywords || keywords.length === 0) return true;
-  const haystack = [
-    thread.content || '',
-    thread.uname || '',
-    ...(thread.replies || []).map(r => (r.content || '') + ' ' + (r.uname || ''))
-  ].join('\n').toLowerCase();
-  return keywords.some(kw => haystack.includes(kw));
+  return [thread, ...(thread.replies || [])].some(r => computeRowHit(r, keywords));
 }
 
 async function renderScanResults() {
@@ -998,7 +1014,7 @@ async function renderScanResults() {
     const isSelected = scanViewState.selected.has(r.uid);
 
     const badges = [];
-    if (isMuted && !isReply) badges.push('<span class="thread-badge muted">未命中搜索</span>');
+    if (isMuted) badges.push('<span class="thread-badge muted">未命中搜索</span>');
     if (locked) badges.push('<span class="thread-badge locked">🔒 已在目标分组</span>');
     if (isIgnored) badges.push('<span class="thread-badge ignored">已忽略</span>');
     if (isAdded) badges.push('<span class="thread-badge added">已加入黑名单</span>');
@@ -1006,14 +1022,15 @@ async function renderScanResults() {
       badges.push(`<span class="thread-badge">${escapeHtml(g)}</span>`);
     });
 
-    // 灰显（未命中搜索）、锁定（已在目标分组）或已忽略：checkbox 禁用，不参与全选/批量
-    const checkDisabled = (isMuted || locked || isIgnored) ? 'disabled' : '';
+    // 锁定（已在目标分组）或已忽略：checkbox 禁用，不参与全选/批量。
+    // 未命中搜索的灰显行【不禁用】——全选时不选它，但可手动勾选加入。
+    const checkDisabled = (locked || isIgnored) ? 'disabled' : '';
     const checked = (!checkDisabled && isSelected) ? 'checked' : '';
 
     return `
-      <div class="thread-row">
+      <div class="thread-row${isMuted ? ' muted' : ''}">
         <input type="checkbox" class="thread-check" data-uid="${r.uid}" ${checked} ${checkDisabled}
-               title="${isMuted ? '该评论未命中搜索词，已置灰，不可批量选择' : (locked ? '该用户已在选中的目标分组中，已自动锁定避免重复添加' : '')}">
+               title="${locked ? '该用户已在选中的目标分组中，已自动锁定避免重复添加' : (isIgnored ? '该评论已被忽略' : (isMuted ? '该评论未命中搜索词（已置灰），全选时会跳过，可手动勾选' : ''))}">
         ${r.avatar
           ? `<img class="thread-avatar${isReply ? ' sm' : ''}" src="${escapeHtml(r.avatar)}" referrerpolicy="no-referrer" alt="">`
           : `<div class="thread-avatar${isReply ? ' sm' : ''}"></div>`}
@@ -1033,12 +1050,14 @@ async function renderScanResults() {
       </div>`;
   };
 
-  scanResultList.innerHTML = ordered.map(({ thread, searchHit }) => {
-    const muted = !searchHit;
-    const replies = (thread.replies || []).map(s => rowHtml(s, true, muted)).join('');
+  scanResultList.innerHTML = ordered.map(({ thread }) => {
+    // 行级命中判定：主楼与每条回复各自独立计算（保证精准匹配，未命中的行灰显禁用）
+    const mainMuted = !computeRowHit(thread, searchKeywords);
+    const mainRow = rowHtml(thread, false, mainMuted);
+    const replies = (thread.replies || []).map(s => rowHtml(s, true, !computeRowHit(s, searchKeywords))).join('');
     return `
-      <div class="thread-card ${scanViewState.ignored.has(thread.uid) ? 'ignored' : ''}${muted ? ' muted' : ''}" data-rpid="${thread.rpid}">
-        ${rowHtml(thread, false, muted)}
+      <div class="thread-card ${scanViewState.ignored.has(thread.uid) ? 'ignored' : ''}" data-rpid="${thread.rpid}">
+        ${mainRow}
         ${replies ? `<div class="thread-replies">${replies}</div>` : ''}
       </div>`;
   }).join('');
@@ -1073,27 +1092,31 @@ async function renderScanResults() {
 }
 
 function updateSelectAllState() {
-  // 只统计未禁用（disabled）的 checkbox：灰显/锁定/已忽略的用户不参与全选
-  const checks = [...document.querySelectorAll('.thread-check')].filter(cb => !cb.disabled);
+  // 全选状态只统计「搜索命中行」的 checkbox（.thread-row 不带 .muted）且未禁用。
+  // 未命中搜索的灰显行可手动勾选，但不计入全选状态，也不会被全选按钮批量勾选。
+  const checks = [...document.querySelectorAll('.thread-row:not(.muted) .thread-check')].filter(cb => !cb.disabled);
   const checked = checks.filter(cb => cb.checked).length;
   scanSelectAll.checked = checks.length > 0 && checked === checks.length;
   scanSelectAll.indeterminate = checked > 0 && checked < checks.length;
   const disabledCount = document.querySelectorAll('.thread-check:disabled').length;
-  const mutedCount = document.querySelectorAll('.thread-card.muted').length;
+  const mutedCount = document.querySelectorAll('.thread-row.muted').length;
   scanBatchHint.textContent = scanViewState.selected.size > 0
-    ? `已选 ${scanViewState.selected.size} 位用户${disabledCount ? ` · ${disabledCount} 项不可选（未命中搜索/已锁定/已忽略）` : ''}`
-    : (disabledCount ? `${mutedCount} 条评论未命中搜索已置灰 · 灰显与锁定内容不可全选` : '');
+    ? `已选 ${scanViewState.selected.size} 位用户${disabledCount ? ` · ${disabledCount} 项不可选（已锁定/已忽略）` : ''}`
+    : (mutedCount ? `${mutedCount} 条未命中搜索已置灰 · 全选会自动跳过，需要的话可手动勾选加入` : '');
 }
 
 scanSelectAll.addEventListener('change', () => {
-  // 全选/取消全选：只作用于未锁定、未忽略的用户（锁定用户保持不选）
-  const visible = [...document.querySelectorAll('.thread-check')]
+  // 全选：只勾选「搜索命中的行」（.thread-row 不带 .muted）；未锁定、未忽略。
+  // 未命中搜索的灰显行不会被全选批量勾选（可手动勾选），但取消全选时一并清除，避免误加。
+  const hitChecks = [...document.querySelectorAll('.thread-row:not(.muted) .thread-check')]
     .filter(cb => !cb.disabled)
     .map(cb => Number(cb.dataset.uid));
   if (scanSelectAll.checked) {
-    visible.forEach(uid => scanViewState.selected.add(uid));
+    hitChecks.forEach(uid => scanViewState.selected.add(uid));
   } else {
-    visible.forEach(uid => scanViewState.selected.delete(uid));
+    // 取消全选：清空当前所有已勾选（含手动勾选的灰显行）
+    [...document.querySelectorAll('.thread-check:checked')]
+      .forEach(cb => scanViewState.selected.delete(Number(cb.dataset.uid)));
   }
   renderScanResults();
 });
