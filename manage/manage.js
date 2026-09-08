@@ -36,6 +36,7 @@ const scanTimeValue = document.getElementById('scan-time-value');
 const scanTimeUnit = document.getElementById('scan-time-unit');
 const scanMaxPages = document.getElementById('scan-max-pages');
 const scanSubReplies = document.getElementById('scan-sub-replies');
+const scanRowClick = document.getElementById('scan-row-click');
 const scanStart = document.getElementById('scan-start');
 const scanStop = document.getElementById('scan-stop');
 const scanVideoInfo = document.getElementById('scan-video-info');
@@ -647,6 +648,7 @@ async function saveScanSettings() {
       [SCAN_SETTINGS_KEY]: {
         maxPages: readMaxPages(),
         includeSub: scanSubReplies.checked,
+        rowClick: scanRowClick.checked,
         mode: parseInt(scanMode.value, 10) || 3,
         timeValue: parseInt(scanTimeValue.value, 10) || 1,
         timeUnit: scanTimeUnit.value || 'd'
@@ -662,6 +664,7 @@ async function loadScanSettings() {
     if (!s) return;
     if (s.maxPages != null) scanMaxPages.value = s.maxPages;
     if (s.includeSub != null) scanSubReplies.checked = !!s.includeSub;
+    if (s.rowClick != null) scanRowClick.checked = !!s.rowClick;
     if (s.mode != null) scanMode.value = s.mode;
     if (s.timeValue != null) scanTimeValue.value = s.timeValue;
     if (s.timeUnit != null) scanTimeUnit.value = s.timeUnit;
@@ -679,6 +682,7 @@ scanMaxPages.addEventListener('input', () => {
   settingsSaveTimer = setTimeout(saveScanSettings, 300);
 });
 scanSubReplies.addEventListener('change', saveScanSettings);
+scanRowClick.addEventListener('change', () => { renderScanResults(); saveScanSettings(); });
 scanMode.addEventListener('change', () => {
   updateTimeRangeVisibility();
   saveScanSettings();
@@ -1090,6 +1094,25 @@ async function renderScanResults() {
     });
   });
 
+  // 「整行点击勾选」：开启后点击主楼/回复行即可勾选（无需精确点小框框）。
+  // 点击用户名链接（跳主页）、操作按钮、checkbox 自身或禁用行时不触发。
+  if (scanRowClick.checked) {
+    scanResultList.querySelectorAll('.thread-row').forEach(row => {
+      row.classList.add('row-clickable');
+      row.addEventListener('click', (e) => {
+        if (e.target.closest('.thread-check')) return; // 点 checkbox 自身，交给 change 事件
+        if (e.target.closest('.thread-uname')) return; // 点用户名跳主页，不打勾
+        if (e.target.closest('.thread-btn')) return;   // 点操作按钮
+        const cb = row.querySelector('.thread-check');
+        if (!cb || cb.disabled) return;                // 禁用行（锁定/已忽略）不响应
+        cb.checked = !cb.checked;
+        const uid = Number(cb.dataset.uid);
+        if (cb.checked) scanViewState.selected.add(uid);
+        else scanViewState.selected.delete(uid);
+        updateSelectAllState();
+      });
+    });
+  }
   updateSelectAllState();
 }
 

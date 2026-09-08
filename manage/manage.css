@@ -309,6 +309,9 @@ body {
 .thread-row.muted .thread-content { color: #999; }
 
 .thread-row { display: flex; align-items: flex-start; gap: 10px; }
+/* 整行点击勾选：开启时提示行可点 + hover 反馈 */
+.thread-row.row-clickable { cursor: pointer; }
+.thread-row.row-clickable:hover { background: rgba(255,255,255,0.03); }
 
 .thread-check { margin-top: 8px; accent-color: #fb7299; cursor: pointer; flex-shrink: 0; }
 .thread-check:disabled { cursor: not-allowed; opacity: 0.5; }
