@@ -32,11 +32,15 @@ const scanVideoInput = document.getElementById('scan-video-input');
 const scanUseTab = document.getElementById('scan-use-tab');
 const scanMode = document.getElementById('scan-mode');
 const scanTimeRangeItem = document.getElementById('scan-time-range-item');
-const scanTimeValue = document.getElementById('scan-time-value');
-const scanTimeUnit = document.getElementById('scan-time-unit');
+const scanTimeFrom = document.getElementById('scan-time-from');
+const scanTimeTo = document.getElementById('scan-time-to');
 const scanMaxPages = document.getElementById('scan-max-pages');
-const scanSubReplies = document.getElementById('scan-sub-replies');
 const scanRowClick = document.getElementById('scan-row-click');
+const cacheMax = document.getElementById('cache-max');
+const cacheSelect = document.getElementById('cache-select');
+const cacheLoad = document.getElementById('cache-load');
+const cacheDel = document.getElementById('cache-del');
+const cacheFav = document.getElementById('cache-fav');
 const scanStart = document.getElementById('scan-start');
 const scanStop = document.getElementById('scan-stop');
 const scanVideoInfo = document.getElementById('scan-video-info');
@@ -617,27 +621,168 @@ fileImport.addEventListener('change', async (e) => {
 // 扫描设置记忆：最大页数与「展开楼中楼」持久化，下次打开管理页自动恢复
 const SCAN_SETTINGS_KEY = 'biliban_scan_settings';
 
+// ==================== 评论缓存 ====================
+// 将扫描获得的评论信息缓存到 storage.local，供后续加载复用。
+// 缓存数量上限可设置（cacheMax，0 = 不缓存），满时 LRU 顶替最早的缓存。
+const SCAN_CACHE_KEY = 'biliban_scan_cache';
+
+async function readCache() {
+  try {
+    const r = await chrome.storage.local.get(SCAN_CACHE_KEY);
+    return r[SCAN_CACHE_KEY] || [];
+  } catch (e) { return []; }
+}
+
+function readCacheMax() {
+  const v = parseInt(cacheMax.value, 10);
+  return isNaN(v) || v < 0 ? 10 : v;
+}
+
+// 扫描完成/停止时自动写入缓存：同视频覆盖，新视频新增，满向 LRU 顶替
+async function addScanToCache(state) {
+  try {
+    const max = readCacheMax();
+    if (max === 0) return;
+    const v = state.video;
+    if (!v || !v.bvid) return;
+    const comments = (state.progress && state.progress.comments) || 0;
+    const entry = {
+      id: v.bvid || String(v.aid || ''),
+      video: { bvid: v.bvid, aid: v.aid, title: v.title || '', ownerName: v.ownerName || '', url: v.url || '' },
+      results: state.results || [],
+      threads: state.threads || [],
+      comments: comments,
+      mode: state.mode,
+      timeRangeText: state.timeRangeText || '',
+      createdAt: Date.now()
+    };
+    let entries = await readCache();
+    const idx = entries.findIndex(e => e.id === entry.id);
+    if (idx >= 0) { entry.favorite = entries[idx].favorite ? 1 : 0; entries[idx] = entry; }
+    else { entry.favorite = 0; entries.push(entry); }
+    entries.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    // LRU 顶替：只清理「未收藏」的缓存，收藏的缓存不会被自动清理，只能手动删除
+    if (entries.length > max) {
+      const favs = entries.filter(e => e.favorite);
+      const norm = entries.filter(e => !e.favorite).slice(0, Math.max(0, max - favs.length));
+      entries = favs.concat(norm);
+    }
+    await chrome.storage.local.set({ [SCAN_CACHE_KEY]: entries });
+    renderCacheSelect();
+  } catch (e) { /* 缓存失败不影响使用 */ }
+}
+
+function renderCacheSelect() {
+  const sel = cacheSelect;
+  readCache().then(entries => {
+    sel.innerHTML = '<option value="">(' + (entries.length ? '共 ' + entries.length + ' 个缓存，选择后加载' : '暂无缓存') + ')</option>';
+    if (entries.length === 0) {
+      cacheLoad.disabled = true;
+      cacheDel.disabled = true;
+      return;
+    }
+    entries.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).forEach(e => {
+      const opt = document.createElement('option');
+      opt.value = e.id;
+      const d = new Date(e.createdAt || 0);
+      opt.textContent = (e.favorite ? '⭐ ' : '') + (e.video.bvid || '') + ' · ' + (e.video.title || '未命名') + ' · ' + (e.comments || 0) + '评论 · ' +
+        (d.getMonth() + 1) + '-' + d.getDate() + ' ' + d.getHours() + ':' + String(d.getMinutes()).padStart(2, '0');
+      sel.appendChild(opt);
+    });
+    if (sel.selectedIndex < 0) sel.selectedIndex = 0;
+    cacheLoad.disabled = false;
+    cacheDel.disabled = false;
+    updateCacheFavBtn();
+  });
+}
+
+async function loadCacheEntry(id) {
+  const entries = await readCache();
+  const entry = entries.find(e => e.id === id);
+  if (!entry) { showToast('缓存不存在'); return; }
+  scanViewState.results = entry.results || [];
+  scanViewState.threads = entry.threads || [];
+  scanViewState.selected.clear();
+  scanViewState.ignored.clear();
+  scanViewState.added.clear();
+  scanViewState.status = 'done';
+  if (scanViewState.results.length > 0 || scanViewState.threads.length > 0) scanResults.style.display = 'block';
+  scanProgress.style.display = 'block';
+  scanVideoInfo.innerHTML = '<div class="video-title">' + escapeHtml(entry.video.title || '未命名视频') + '</div>' +
+    (entry.video.ownerName ? escapeHtml(entry.video.ownerName) + ' · ' : '') +
+    '<a href="' + escapeHtml(entry.video.url) + '" target="_blank" style="color:#fb7299">' + escapeHtml(entry.video.bvid || entry.video.aid) + '</a>';
+  scanProgressText.textContent = '已从缓存加载：' + (entry.comments || 0) + ' 条评论·' + scanViewState.results.length + ' 位用户' +
+    (entry.timeRangeText ? ' · 时间范围 ' + entry.timeRangeText : '');
+  scanNote.textContent = '';
+  renderScanResults();
+  showToast('📂 已加载缓存结果');
+}
+
+async function delCacheEntry(id) {
+  let entries = await readCache();
+  entries = entries.filter(e => e.id !== id);
+  try {
+    await chrome.storage.local.set({ [SCAN_CACHE_KEY]: entries });
+    renderCacheSelect();
+    showToast('🗑 已删除缓存');
+  } catch (e) {}
+}
+
+async function favoriteCache(id) {
+  try {
+    let entries = await readCache();
+    const e = entries.find(x => x.id === id);
+    if (!e) { showToast('缓存不存在'); return; }
+    e.favorite = 1;
+    await chrome.storage.local.set({ [SCAN_CACHE_KEY]: entries });
+    renderCacheSelect();
+    showToast('⭐ 已收藏，不会被自动清理');
+  } catch (e2) {}
+}
+
+// 根据当前选中项更新收藏按钮状态（已收藏则禁用）
+function updateCacheFavBtn() {
+  const id = cacheSelect.value;
+  if (!id) { cacheFav.disabled = true; return; }
+  readCache().then(es => {
+    const e = es.find(x => x.id === id);
+    cacheFav.disabled = !e || !!e.favorite;
+  });
+}
+
+cacheMax.addEventListener('change', saveScanSettings);
+cacheLoad.addEventListener('click', () => { const id = cacheSelect.value; if (id) loadCacheEntry(id); });
+cacheDel.addEventListener('click', async () => { const id = cacheSelect.value; if (id) await delCacheEntry(id); });
+cacheFav.addEventListener('click', () => { const id = cacheSelect.value; if (id) favoriteCache(id); });
+cacheSelect.addEventListener('change', updateCacheFavBtn);
+renderCacheSelect();
+
 function readMaxPages() {
   const pages = scanMaxPages.value.trim();
   return pages === '' ? 10 : parseInt(pages, 10) || 0;
 }
 
-// 时间范围转秒（仅最新模式使用）；返回 null 表示未启用
+// 时间范围（仅最新模式）：起止时间转秒。起始较新 / 终止较旧；只设其一也支持；都未设返回 null
+function datetimeToSec(v) { return v ? Math.floor(new Date(v).getTime() / 1000) : null; }
 function readTimeRangeSeconds() {
   if (Number(scanMode.value) !== 2) return null;
-  const value = parseInt(scanTimeValue.value, 10);
-  if (!value || value <= 0) return null;
-  const units = { s: 1, h: 3600, d: 86400, m: 2592000, y: 31536000 };
-  const unit = units[scanTimeUnit.value];
-  if (!unit) return null;
-  return value * unit;
+  const from = datetimeToSec(scanTimeFrom.value);
+  const to = datetimeToSec(scanTimeTo.value);
+  if (from == null && to == null) return null;
+  return { from, to };
 }
 
 function readTimeRangeText() {
-  const value = parseInt(scanTimeValue.value, 10);
-  if (!value || value <= 0) return null;
-  const labels = { s: '秒', h: '小时', d: '天', m: '月', y: '年' };
-  return `最近 ${value} ${labels[scanTimeUnit.value] || ''}`.trim();
+  const fmt = (em) => {
+    if (!em) return '';
+    const d = new Date(em);
+    return (d.getMonth() + 1) + '-' + d.getDate() + ' ' + d.getHours() + ':' + String(d.getMinutes()).padStart(2, '0');
+  };
+  const fromStr = scanTimeFrom.value, toStr = scanTimeTo.value;
+  if (fromStr && toStr) return fmt(fromStr) + ' ~ ' + fmt(toStr);
+  if (fromStr) return '起始于 ' + fmt(fromStr);
+  if (toStr) return '截止 ' + fmt(toStr);
+  return null;
 }
 
 // 排序切换：「最新」显示时间范围选项（也在 scanMode 的完整 change 监听中处理）
@@ -647,11 +792,11 @@ async function saveScanSettings() {
     await chrome.storage.local.set({
       [SCAN_SETTINGS_KEY]: {
         maxPages: readMaxPages(),
-        includeSub: scanSubReplies.checked,
         rowClick: scanRowClick.checked,
+        cacheMax: readCacheMax(),
         mode: parseInt(scanMode.value, 10) || 3,
-        timeValue: parseInt(scanTimeValue.value, 10) || 1,
-        timeUnit: scanTimeUnit.value || 'd'
+        timeFrom: scanTimeFrom.value,
+        timeTo: scanTimeTo.value
       }
     });
   } catch (e) { /* 保存失败不影响使用 */ }
@@ -663,11 +808,11 @@ async function loadScanSettings() {
     const s = result[SCAN_SETTINGS_KEY];
     if (!s) return;
     if (s.maxPages != null) scanMaxPages.value = s.maxPages;
-    if (s.includeSub != null) scanSubReplies.checked = !!s.includeSub;
     if (s.rowClick != null) scanRowClick.checked = !!s.rowClick;
+    if (s.cacheMax != null) cacheMax.value = s.cacheMax;
     if (s.mode != null) scanMode.value = s.mode;
-    if (s.timeValue != null) scanTimeValue.value = s.timeValue;
-    if (s.timeUnit != null) scanTimeUnit.value = s.timeUnit;
+    if (s.timeFrom != null) scanTimeFrom.value = s.timeFrom;
+    if (s.timeTo != null) scanTimeTo.value = s.timeTo;
     updateTimeRangeVisibility();
   } catch (e) { /* 恢复失败用默认值 */ }
 }
@@ -681,17 +826,19 @@ scanMaxPages.addEventListener('input', () => {
   clearTimeout(settingsSaveTimer);
   settingsSaveTimer = setTimeout(saveScanSettings, 300);
 });
-scanSubReplies.addEventListener('change', saveScanSettings);
 scanRowClick.addEventListener('change', () => { renderScanResults(); saveScanSettings(); });
 scanMode.addEventListener('change', () => {
   updateTimeRangeVisibility();
   saveScanSettings();
 });
-scanTimeValue.addEventListener('input', () => {
+scanTimeFrom.addEventListener('input', () => {
   clearTimeout(settingsSaveTimer);
   settingsSaveTimer = setTimeout(saveScanSettings, 300);
 });
-scanTimeUnit.addEventListener('change', saveScanSettings);
+scanTimeTo.addEventListener('input', () => {
+  clearTimeout(settingsSaveTimer);
+  settingsSaveTimer = setTimeout(saveScanSettings, 300);
+});
 
 async function sendToBackground(msg) {
   try {
@@ -739,16 +886,18 @@ scanStart.addEventListener('click', async () => {
   const options = {
     // 空值回退 10；0 == "不限页数"（全量），不能走 || 默认值
     maxPages: pages === '' ? 10 : parseInt(pages, 10) || 0,
-    includeSub: scanSubReplies.checked,
+    includeSub: true, // 展开楼中楼默认启用
     mode: parseInt(scanMode.value, 10) || 3
   };
 
-  // 最新模式 + 时间范围：把"最近 N 单位"换算为秒级时间窗传给后台
+  // 最新模式 + 时间范围：把起止时间换算为秒级边界传给后台（只设其一也可）
   if (options.mode === 2) {
-    const maxAgeSeconds = readTimeRangeSeconds();
-    if (maxAgeSeconds) {
-      options.maxAgeSeconds = maxAgeSeconds;
-      options.timeRangeText = readTimeRangeText();
+    const range = readTimeRangeSeconds();
+    if (range) {
+      const text = readTimeRangeText();
+      if (range.from != null) options.timeFrom = range.from;
+      if (range.to != null) options.timeTo = range.to;
+      if (text) options.timeRangeText = text;
     }
   }
 
@@ -866,6 +1015,11 @@ function applyScanState(state) {
   if (scanViewState.results.length > 0 || scanViewState.threads.length > 0) {
     scanResults.style.display = 'block';
     renderScanResults();
+  }
+
+  // 完成/停止时自动写入缓存（同视频覆盖 + LRU），供后续加载复用
+  if ((state.status === 'done' || state.status === 'stopped') && state.video) {
+    addScanToCache(state);
   }
 }
 
@@ -1094,16 +1248,22 @@ async function renderScanResults() {
     });
   });
 
-  // 「整行点击勾选」：开启后点击主楼/回复行即可勾选（无需精确点小框框）。
-  // 点击用户名链接（跳主页）、操作按钮、checkbox 自身或禁用行时不触发。
+  // 「全行点击勾选」：开启后点击卡片任意处（含内边距/回复缩进空白）即可勾选。
+  // 点主楼空白勾选主楼；点回复区域空白勾选对应回复；点用户名/按钮/checkbox 不触发。
   if (scanRowClick.checked) {
-    scanResultList.querySelectorAll('.thread-row').forEach(row => {
-      row.classList.add('row-clickable');
-      row.addEventListener('click', (e) => {
+    scanResultList.querySelectorAll('.thread-card').forEach(card => {
+      card.classList.add('row-clickable');
+      card.addEventListener('click', (e) => {
         if (e.target.closest('.thread-check')) return; // 点 checkbox 自身，交给 change 事件
         if (e.target.closest('.thread-uname')) return; // 点用户名跳主页，不打勾
         if (e.target.closest('.thread-btn')) return;   // 点操作按钮
-        const cb = row.querySelector('.thread-check');
+        let row = e.target.closest('.thread-row');
+        if (!row) {
+          // 点到空白/内边距：回复缩进空白归该回复块第一条，否则归主楼
+          const repArea = e.target.closest('.thread-replies');
+          row = repArea ? repArea.querySelector('.thread-row') : card.querySelector('.thread-row');
+        }
+        const cb = row ? row.querySelector('.thread-check') : null;
         if (!cb || cb.disabled) return;                // 禁用行（锁定/已忽略）不响应
         cb.checked = !cb.checked;
         const uid = Number(cb.dataset.uid);

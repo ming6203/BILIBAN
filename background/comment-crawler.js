@@ -547,12 +547,12 @@ const Crawler = {
       note: null
     };
 
-    // 时间范围过滤（仅最新模式）：cutoff 之前的评论视为超出范围
-    // 最新排序逐页变早，一旦某页整体早于 cutoff 即停止拉取
-    let cutoff = null;
-    if (opt.mode === 2 && options && options.maxAgeSeconds) {
-      const maxAge = clampInt(options.maxAgeSeconds, 1, 15 * 365 * 86400, 86400);
-      cutoff = Math.floor(Date.now() / 1000) - maxAge;
+    // 时间范围过滤（仅最新模式）：ctime 落在 [timeTo, timeFrom] 区间内（时间戳：新为大、旧为小）
+    // 起始 timeFrom（较新）/ 终止 timeTo（较旧），只设其一也支持；只设终止 = 从最新评论拉到终止边界
+    let timeFrom = null, timeTo = null;
+    if (opt.mode === 2 && (options && (options.timeFrom || options.timeTo))) {
+      timeFrom = options.timeFrom ? Number(options.timeFrom) : null;
+      timeTo = options.timeTo ? Number(options.timeTo) : null;
       if (options.timeRangeText) {
         state.timeRangeText = options.timeRangeText;
         state.note = '按时间范围拉取：' + options.timeRangeText;
@@ -581,13 +581,20 @@ const Crawler = {
       while (!this.stopRequested && (opt.maxPages === 0 || pagesFetched < opt.maxPages)) {
         const page = await this.fetchMainPage(video.aid, opt.mode, next);
 
-        // 时间范围过滤：该页整体早于 cutoff 即算超出范围（最新排序逐页变早），停止
+        // 时间范围过滤：ctime 需落在 [timeTo, timeFrom] 区间（timeFrom 较新 / timeTo 较旧）
         let hitTimeLimit = false;
-        if (cutoff) {
+        if (timeFrom != null || timeTo != null) {
           const before = page.replies.length;
           if (before > 0) {
-            page.replies = page.replies.filter(r => (r.ctime || 0) >= cutoff);
-            if (page.replies.length === 0) hitTimeLimit = true;
+            const pageMax = Math.max(...before.map(r => r.ctime || 0));
+            page.replies = before.filter(r => {
+              const c = r.ctime || 0;
+              if (timeFrom != null && c > timeFrom) return false; // 新于起始
+              if (timeTo != null && c < timeTo) return false;     // 早于终止
+              return true;
+            });
+            // 最新排序逐页变早：整页最早评论已早于终止边界，后续更早不再命中区间 → 停止
+            if (timeTo != null && pageMax < timeTo) hitTimeLimit = true;
           }
         }
 
@@ -635,9 +642,9 @@ const Crawler = {
         await chrome.storage.session.set({ [STATE_KEY]: state });
         this.notify(state);
 
-        // 时间范围边界：整页已早于 cutoff，无需再翻下一页
+        // 时间范围边界：整页已早于终止时间，无需再翻下一页
         if (hitTimeLimit) {
-          state.note = '已达时间范围边界（' + (state.timeRangeText || '设置范围') + '之前），更早的评论已跳过；完成';
+          state.note = '已达终止时间边界（' + (state.timeRangeText || '设置范围') + '），更早的评论已跳过；完成';
           break;
         }
 

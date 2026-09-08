@@ -218,6 +218,10 @@ body {
   display: flex; align-items: center; gap: 20px; flex-wrap: wrap; margin-bottom: 14px;
 }
 
+.scan-cache-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 6px; }
+.scan-cache-row .cache-max-item { white-space: nowrap; }
+.scan-cache-row .cache-pick-item { gap: 6px; }
+.cache-select { max-width: 320px; }
 .opt-item { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #aaa; }
 
 .opt-item select, .small-select {
@@ -239,6 +243,9 @@ body {
 .checkbox-item input { accent-color: #fb7299; cursor: pointer; }
 
 .opt-hint { font-size: 11px; color: #888; }
+.time-range-label { white-space: nowrap; }
+.time-input { background: #2a2a2a; color: #ddd; border: 1px solid #3c3c3c; border-radius: 4px; padding: 3px 6px; font-size: 12px; }
+.time-range-arrow { color: #888; font-size: 12px; }
 
 .scan-actions { display: flex; align-items: center; gap: 10px; }
 .scan-hint { font-size: 12px; color: #888; }
@@ -309,9 +316,9 @@ body {
 .thread-row.muted .thread-content { color: #999; }
 
 .thread-row { display: flex; align-items: flex-start; gap: 10px; }
-/* 整行点击勾选：开启时提示行可点 + hover 反馈 */
-.thread-row.row-clickable { cursor: pointer; }
-.thread-row.row-clickable:hover { background: rgba(255,255,255,0.03); }
+/* 全行点击勾选：开启时整卡可点 + hover 反馈（覆盖内边距/回复缩进等盲区） */
+.thread-card.row-clickable { cursor: pointer; }
+.thread-card.row-clickable:hover { background: rgba(255,255,255,0.04); }
 
 .thread-check { margin-top: 8px; accent-color: #fb7299; cursor: pointer; flex-shrink: 0; }
 .thread-check:disabled { cursor: not-allowed; opacity: 0.5; }

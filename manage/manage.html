@@ -19,7 +19,6 @@
         <button class="tab" data-tab="scan">🔍 评论扫描</button>
       </nav>
     </header>
-
     <!-- ==================== 黑名单管理 ==================== -->
     <section class="tab-content active" id="tab-blacklist">
       <div class="toolbar">
@@ -33,7 +32,6 @@
           <span class="stats" id="stats"></span>
         </div>
       </div>
-
       <div class="groups-container" id="groups-container">
         <div class="empty-state">
           <div class="empty-icon">📋</div>
@@ -41,7 +39,6 @@
         </div>
       </div>
     </section>
-
     <!-- ==================== 评论扫描 ==================== -->
     <section class="tab-content" id="tab-scan">
       <!-- 扫描配置 -->
@@ -50,6 +47,17 @@
         <div class="scan-input-row">
           <input type="text" id="scan-video-input" placeholder="粘贴视频链接 / BV号 / av号，例如 https://www.bilibili.com/video/BV1xx..." class="text-input">
           <button id="scan-use-tab" class="secondary-btn">使用当前标签页</button>
+        </div>
+        <div class="scan-cache-row">
+          <label class="opt-item checkbox-item cache-max-item">缓存上限
+            <input type="number" id="cache-max" class="num-input" value="10" min="0" max="50">
+          </label>
+          <label class="opt-item cache-pick-item">加载缓存
+            <select id="cache-select" class="small-select cache-select"><option value="">(暂无缓存)</option></select>
+            <button id="cache-load" class="secondary-btn-sm" disabled>📂 加载</button>
+            <button id="cache-del" class="secondary-btn-sm" disabled>🗑 删除</button>
+          </label>
+          <button id="cache-fav" class="secondary-btn-sm" disabled title="收藏的缓存不会被自动清理，只能手动删除">⭐ 收藏</button>
         </div>
         <div class="scan-options">
           <label class="opt-item">排序
@@ -60,26 +68,16 @@
           </label>
           <!-- 时间范围：仅「最新」排序启用 -->
           <label class="opt-item" id="scan-time-range-item" style="display:none">
-            时间范围
-            <input type="number" id="scan-time-value" class="num-input" value="1" min="1" max="10000">
-            <select id="scan-time-unit" class="small-select">
-              <option value="y">年 (y)</option>
-              <option value="m">月 (m)</option>
-              <option value="d" selected>天 (d)</option>
-              <option value="h">小时 (h)</option>
-              <option value="s">秒 (s)</option>
-            </select>
-            <span class="opt-hint">(拉取最近 N 单位内发布的评论，超出即停)</span>
+            <span class="time-range-label">时间范围</span>
+            <input type="datetime-local" id="scan-time-from" class="time-input" title="起始时间（较新）。留空 = 从最新评论开始">
+            <span class="time-range-arrow">→</span>
+            <input type="datetime-local" id="scan-time-to" class="time-input" title="终止时间（较旧）。只设终止 = 从最新评论拉到该时刻">
           </label>
           <label class="opt-item">最大页数
             <input type="number" id="scan-max-pages" value="10" min="0" max="500" class="num-input">
-            <span class="opt-hint">(0 = 拉取全部，直到评论区结束)</span>
           </label>
           <label class="opt-item checkbox-item">
-            <input type="checkbox" id="scan-sub-replies"> 展开楼中楼（请求量更大，覆盖率更高）
-          </label>
-          <label class="opt-item checkbox-item">
-            <input type="checkbox" id="scan-row-click"> 整行点击勾选（点击评论即可勾选，无需精准点小框框）
+            <input type="checkbox" id="scan-row-click" title="点击评论即可勾选，无需精准点小框框"> 全行点击
           </label>
         </div>
         <div class="scan-actions">
@@ -88,7 +86,6 @@
           <span class="scan-hint" id="scan-status-hint">扫描在后台进行，页面可随意切换</span>
         </div>
       </div>
-
       <!-- 扫描进度 -->
       <div class="card scan-progress" id="scan-progress" style="display:none">
         <div class="card-title">📈 扫描进度</div>
@@ -99,11 +96,9 @@
           <span class="progress-note" id="scan-note"></span>
         </div>
       </div>
-
       <!-- 扫描结果 -->
       <div class="card scan-results" id="scan-results" style="display:none">
         <div class="card-title">🧾 匹配结果 <span class="title-sub" id="scan-result-summary"></span></div>
-
         <div class="result-toolbar">
           <span class="filter-label">🔍 搜索：</span>
           <input type="text" id="scan-search-input" class="search-input" placeholder="输入关键词，筛选带该词的评论（命中置顶，未命中变灰）">
@@ -113,7 +108,6 @@
             <input type="checkbox" id="scan-select-all"> 全选
           </label>
         </div>
-
         <div class="batch-bar" id="scan-batch-bar">
           <span>批量操作：</span>
           <select id="scan-batch-group" class="small-select"></select>
@@ -121,15 +115,12 @@
           <button id="scan-batch-ignore" class="secondary-btn-sm">忽略</button>
           <span class="batch-hint" id="scan-batch-hint"></span>
         </div>
-
         <div class="result-list" id="scan-result-list"></div>
       </div>
     </section>
   </div>
-
   <!-- 隐藏的文件导入 -->
   <input type="file" id="file-import" accept=".json" style="display:none">
-
   <!-- 通用对话框 -->
   <div class="modal-overlay" id="modal-overlay" style="display:none">
     <div class="modal">
@@ -141,7 +132,6 @@
       </div>
     </div>
   </div>
-
   <script src="../lib/storage.js"></script>
   <script src="../lib/github.js"></script>
   <script src="manage.js"></script>
