@@ -459,6 +459,8 @@ function renderChunkManageButtons() {
     manageBtns.innerHTML = `
       <button class="group-action-btn" data-chunk-action="edit" data-chunk-id="${chunkId}" title="编辑分块">✏️</button>
       <button class="group-action-btn" data-chunk-action="delete" data-chunk-id="${chunkId}" title="删除分块">🗑️</button>`;
+    // 幂等化：先移除已有的按钮，避免重复调用时叠加出两组
+    header.querySelector(".chunk-manage-btns")?.remove();
     header.appendChild(manageBtns);
 
     manageBtns.querySelector('[data-chunk-action="edit"]').addEventListener('click', async (e) => {
@@ -1231,7 +1233,6 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 async function init() {
   await render();
-  renderChunkManageButtons();
   await loadScanSettings();
   await loadScanState();
 }
