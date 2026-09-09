@@ -49,11 +49,16 @@
   // 归档区 DOM
   const archEl = {
     refresh: document.getElementById('archive-refresh'),
+    back: document.getElementById('archive-back'),
     status: document.getElementById('archive-status'),
     summary: document.getElementById('archive-summary'),
     cloudList: document.getElementById('archive-cloud-list'),
     downloadList: document.getElementById('archive-download-list')
   };
+
+  // 归档视图状态（加载的分块数据）
+  let archivedView = null;   // { name, dir }
+  let archivedStats = null;
 
   let currentStats = null;   // 最近一次 getBlockStats 结果
   let tooltip = null;        // tooltip 元素
@@ -284,18 +289,19 @@
   }
 
   // 下载归档分块（fetch 带 token → blob → chrome.downloads）
-  async function downloadArchivePart(name) {
+  async function downloadArchivePart(name, dir) {
     if (typeof BilibanBackupSync === 'undefined' || typeof BilibanBackupSync.readDataFile !== 'function') {
       throw new Error('归档模块未加载');
     }
-    const part = await BilibanBackupSync.readDataFile('archive/' + name);
+    const part = await BilibanBackupSync.readDataFile(name, dir);
     if (!part) throw new Error('分块读取失败');
     const blob = new Blob([JSON.stringify(part, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     try {
       const fileName = 'biliban_archive_' + name + '.json';
+      let downloadId = null;
       if (typeof chrome.downloads !== 'undefined' && chrome.downloads.download) {
-        await chrome.downloads.download({ url: url, filename: fileName, saveAs: false });
+        downloadId = await chrome.downloads.download({ url: url, filename: fileName, saveAs: false });
       } else {
         // 无 downloads 权限时的降级：a 标签下载
         const a = document.createElement('a');
@@ -306,9 +312,11 @@
       await BilibanBackupSync.addDownload({
         id: name + '_' + Date.now(),
         partName: name,
+        dir: dir || '',
         fileName: fileName,
         downloadedAt: Date.now(),
-        eventCount: (part.meta && part.meta.eventCount) || 0
+        eventCount: (part.meta && part.meta.eventCount) || 0,
+        downloadId: downloadId
       });
     } finally {
       setTimeout(() => URL.revokeObjectURL(url), 30000);
@@ -339,7 +347,7 @@
             '<span class="archive-meta">' + p.name + '</span>' +
             '<span class="archive-sub">' + (m.eventCount || 0) + ' 事件 · ' + tr + ' · ' + fmtBytes(p.size || 0) + '</span>' +
             (downloadedNames.has(p.name) ? '<span class="archive-sub">✅ 已下载</span>' : '') +
-            '<button class="secondary-btn-sm archive-dl-btn" data-name="' + p.name + '">下载</button>' +
+            '<button class="secondary-btn-sm archive-dl-btn" data-name="' + p.name + '" data-dir="' + (p.dir || '') + '">下载</button>' +
             '</div>';
         }).join('');
         archEl.cloudList.querySelectorAll('.archive-dl-btn').forEach(btn => {
@@ -347,7 +355,7 @@
             btn.disabled = true;
             btn.textContent = '下载中...';
             try {
-              await downloadArchivePart(btn.dataset.name);
+              await downloadArchivePart(btn.dataset.name, btn.dataset.dir || undefined);
               archEl.status.textContent = '✅ 已下载 ' + btn.dataset.name;
               archEl.status.style.color = '#7ecb20';
               await renderArchiveUI();
@@ -368,13 +376,39 @@
           '<div class="archive-item">' +
           '<span class="archive-meta">' + d.fileName + '</span>' +
           '<span class="archive-sub">' + fmtDate(d.downloadedAt) + ' 下载 · ' + (d.eventCount || 0) + ' 事件</span>' +
-          '<button class="danger-btn-sm archive-del-btn" data-id="' + d.id + '">删除记录</button>' +
+          '<button class="secondary-btn-sm archive-load-btn" data-name="' + d.partName + '" data-dir="' + (d.dir || '') + '">加载</button>' +
+          '<button class="secondary-btn-sm archive-del-btn" data-id="' + d.id + '">删除</button>' +
           '</div>'
         ).join('');
+        // 加载：从云端拉取分块 → 数据面板切换为归档视图
+        archEl.downloadList.querySelectorAll('.archive-load-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            try {
+              btn.disabled = true;
+              btn.textContent = '加载中...';
+              await loadArchivePart(btn.dataset.name, btn.dataset.dir || undefined);
+              archEl.status.textContent = '📦 已加载归档分块 ' + btn.dataset.name;
+              archEl.status.style.color = '#7ecb20';
+            } catch (e) {
+              archEl.status.textContent = '❌ 加载失败: ' + (e.message || e);
+              archEl.status.style.color = '#ff4d4f';
+            } finally {
+              btn.disabled = false;
+              btn.textContent = '加载';
+            }
+          });
+        });
+        // 删除：删本地文件（云端归档保留）+ 删记录
         archEl.downloadList.querySelectorAll('.archive-del-btn').forEach(btn => {
           btn.addEventListener('click', async () => {
             try {
+              const rec = downloads.find(d => d.id === btn.dataset.id);
+              if (rec && rec.downloadId != null && typeof chrome.downloads !== 'undefined' && chrome.downloads.removeFile) {
+                try { await chrome.downloads.removeFile(rec.downloadId); } catch (e) { /* 文件可能已手动删除 */ }
+              }
               await BilibanBackupSync.removeDownload(btn.dataset.id);
+              archEl.status.textContent = '✅ 已删除本地文件与记录（云端分块保留）';
+              archEl.status.style.color = '#7ecb20';
               await renderArchiveUI();
             } catch (e) {
               archEl.status.textContent = '❌ 删除失败: ' + (e.message || e);
@@ -390,7 +424,58 @@
     }
   }
 
+  // 加载归档分块 → 数据面板切换为归档视图（概览 + 折线图显示分块历史数据）
+  async function loadArchivePart(name, dir) {
+    if (typeof BilibanBackupSync === 'undefined' || typeof BilibanBackupSync.readDataFile !== 'function') {
+      throw new Error('归档模块未加载');
+    }
+    const part = await BilibanBackupSync.readDataFile(name, dir);
+    if (!part) throw new Error('分块读取失败');
+    const events = Array.isArray(part.events) ? part.events : [];
+    // 从事件明细重建按天 buckets（折线图数据源）
+    const buckets = {}, videoBuckets = {}, commentBuckets = {};
+    for (const ev of events) {
+      const d = new Date(ev.timestamp || 0);
+      const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+      buckets[key] = (buckets[key] || 0) + 1;
+      if (ev.type === 'video') videoBuckets[key] = (videoBuckets[key] || 0) + 1;
+      else commentBuckets[key] = (commentBuckets[key] || 0) + 1;
+    }
+    archivedStats = {
+      total: events.length,
+      videoCount: events.filter(e => e.type === 'video').length,
+      commentCount: events.filter(e => e.type !== 'video').length,
+      events: events,
+      aggregates: part.aggregates || {},
+      buckets: buckets,
+      videoBuckets: videoBuckets,
+      commentBuckets: commentBuckets,
+      lastSynced: 0
+    };
+    archivedView = { name: name, dir: dir || '' };
+    renderOverview(archivedStats);
+    if (archivedStats.total > 0 || Object.keys(buckets).length > 0) {
+      el.canvas.style.display = 'block';
+      el.empty.style.display = 'none';
+      drawChart(archivedStats);
+    } else {
+      el.canvas.style.display = 'none';
+      el.empty.style.display = 'block';
+    }
+    el.hint.textContent = '📦 正在查看归档分块 ' + name + '（' + events.length + ' 事件，' + Object.keys(buckets).length + ' 天）——点「↩ 返回当前数据」恢复实时数据';
+    if (archEl.back) archEl.back.style.display = 'inline-block';
+  }
+
+  // 退出归档视图，恢复实时数据
+  function exitArchiveView() {
+    archivedView = null;
+    archivedStats = null;
+    if (archEl.back) archEl.back.style.display = 'none';
+    render();
+  }
+
   if (archEl.refresh) archEl.refresh.addEventListener('click', renderArchiveUI);
+  if (archEl.back) archEl.back.addEventListener('click', exitArchiveView);
 
   // ---------- 事件 ----------
   if (el.refresh) el.refresh.addEventListener('click', render);
