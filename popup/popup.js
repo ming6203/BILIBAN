@@ -44,6 +44,43 @@ const sourceList = document.getElementById('source-list');
 // 完整管理面板入口
 const btnManage = document.getElementById('btn-manage');
 
+// 告警徽标：数据面板已用达到告警阈值时显示 ❗（位于管理面板按钮旁）
+const warnBadge = document.getElementById('warn-badge');
+async function checkWarnBadge() {
+  if (!warnBadge) return;
+  try {
+    const r = await chrome.storage.local.get(['biliban_block_events', 'biliban_advanced_settings']);
+    const data = r.biliban_block_events || {};
+    const adv = r.biliban_advanced_settings || {};
+    const events = data.events || [];
+    const mode = adv.eventLimitMode || 'size';
+    const warnPct = adv.byteWarnPct != null ? Number(adv.byteWarnPct) : 90;
+    let pct = 0;
+    if (mode === 'size') {
+      const limitMB = adv.maxEventsMB != null ? Number(adv.maxEventsMB) : 8;
+      if (limitMB > 0) {
+        const bytes = events.length ? JSON.stringify(events).length * 2 : 0;
+        pct = Math.round(bytes / (limitMB * 1024 * 1024) * 100);
+      }
+    } else {
+      const quota = adv.maxEvents != null ? Number(adv.maxEvents) : 50000;
+      if (quota > 0) pct = Math.round(events.length / quota * 100);
+    }
+    const show = pct >= warnPct;
+    warnBadge.style.display = show ? 'inline-block' : 'none';
+    if (show) {
+      warnBadge.title = '数据面板已用 ' + pct + '%（告警阈值 ' + warnPct + '%），点击打开管理面板处理';
+    }
+  } catch (e) {
+    warnBadge.style.display = 'none';
+  }
+}
+if (warnBadge) {
+  warnBadge.addEventListener('click', () => {
+    chrome.runtime.openOptionsPage().catch(() => {});
+  });
+}
+
 // ==================== 分块选择状态 ====================
 let selectedChunkIds = new Set();
 
@@ -654,3 +691,4 @@ async function renderOtherFileList(files, repoRef) {
 // ==================== 初始化 ====================
 
 initGithubPanel();
+checkWarnBadge();
