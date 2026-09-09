@@ -109,9 +109,9 @@
           <label class="opt-item">批量刷盘定时（秒）<input type="number" id="adv-flush-interval" class="num-input" min="1" max="300" title="缓冲非空时超时刷盘，空缓冲不写入"></label>
           <label class="opt-item">超额策略
             <select id="adv-overflow-strategy" class="small-select">
-              <option value="1">转聚合（推荐）</option>
-              <option value="2">淘汰最早明细</option>
-              <option value="3">清空明细只留聚合</option>
+              <option value="1">淘汰最早明细（推荐）</option>
+              <option value="2">停止记录</option>
+              <option value="3">清空明细只留曲线</option>
             </select>
           </label>
           <label class="opt-item">告警百分比（%）<input type="number" id="adv-byte-warn" class="num-input" min="10" max="100" title="达到配额（数量或大小）的 X% 时高亮提示"></label>
@@ -119,31 +119,6 @@
         <div class="adv-actions">
           <button id="adv-save-data" class="primary-btn">保存设置</button>
           <span class="scan-hint" id="adv-hint-data"></span>
-        </div>
-      </div>
-      <div class="card stats-advanced">
-        <div class="card-title">🧩 聚合设置</div>
-        <div class="adv-grid">
-          <label class="opt-item">限制模式
-            <select id="adv-agg-limit-mode" class="small-select">
-              <option value="count">数量形式</option>
-              <option value="size" selected>大小形式</option>
-            </select>
-          </label>
-          <label class="opt-item" id="adv-max-aggregates-item">聚合配额（键数）<input type="number" id="adv-max-aggregates" class="num-input" min="0" max="100000" title="聚合表最多保留多少个 bvid+uid 键，0=不限制；达到后按清理策略处理"><span class="quota-used" id="adv-aggregates-used"></span></label>
-          <label class="opt-item" id="adv-max-agg-mb-item" style="display:none">聚合大小上限（MB）<input type="number" id="adv-max-agg-mb" class="num-input" min="0" max="20" title="聚合表占用估算上限，0=不限制；超过时清理"><span class="quota-used" id="adv-agg-mb-used"></span></label>
-          <label class="opt-item">聚合清理策略
-            <select id="adv-aggregate-strategy" class="small-select">
-              <option value="1">LRU 淘汰</option>
-              <option value="2">保留期内</option>
-              <option value="3">降级 time-bucket</option>
-            </select>
-          </label>
-          <label class="opt-item">聚合保留期（天）<input type="number" id="adv-aggregate-retain" class="num-input" min="0" max="3650" title="超过保留期的聚合键删除，0=不清理"></label>
-        </div>
-        <div class="adv-actions">
-          <button id="adv-save-agg" class="primary-btn">保存设置</button>
-          <span class="scan-hint" id="adv-hint-agg"></span>
         </div>
       </div>
       <div class="card stats-advanced">
@@ -164,7 +139,7 @@
           <label class="opt-item wide">备份仓库名称<input type="text" id="bk-repo-name" class="text-input" title="黑名单备份仓库名"><span style="margin-left:16px"></span><input type="checkbox" id="bk-same-repo" checked> 与黑名单同一仓库<span style="margin-left:16px"></span>独立数据仓库名称<input type="text" id="bk-data-repo" class="text-input" title="关闭同一仓库时数据单独存此仓库"></label>
         </div>
         <div class="adv-actions">
-          <button id="bk-save" class="primary-btn">保存备份设置</button>
+          <button id="bk-save" class="primary-btn">保存设置</button>
           <span class="scan-hint" id="bk-hint"></span>
         </div>
       </div>
@@ -175,9 +150,10 @@
           <label class="opt-item wide">黑名单仓库可见性<select id="gh-visibility" class="small-select"><option value="private">🔒 私有</option><option value="public">🌐 公共</option></select><span id="gh-data-vis-item"><span style="margin-left:16px"></span>数据仓库可见性<select id="gh-data-visibility" class="small-select"><option value="private">🔒 私有</option><option value="public">🌐 公共</option></select></span></label>
         </div>
         <div class="adv-actions">
-          <button id="gh-token-save" class="primary-btn">验证 Token</button>
+          <button id="gh-token-save" class="primary-btn">保存设置</button>
           <span class="scan-hint" id="gh-account-status"></span>
         </div>
+      </div>
       <div class="card stats-advanced">
         <div class="card-title">📦 归档设置</div>
         <div class="adv-grid">
@@ -186,10 +162,10 @@
           <label class="opt-item checkbox-item"><input type="checkbox" id="adv-archive-auto-clean"> 自动清理（上传归档后按限制模式保留最新数据，旧数据自动删除）</label>
         </div>
         <div class="adv-actions">
+          <button id="adv-archive-save" class="primary-btn">保存设置</button>
           <button id="adv-archive-clean-btn" class="secondary-btn">清理已归档数据</button>
           <span class="scan-hint" id="adv-archive-hint"></span>
         </div>
-      </div>
       </div>
     </section>
     <!-- ==================== 评论扫描 ==================== -->

@@ -13,13 +13,8 @@
     eventLimitMode: 'size',      // 数据面板限制模式：count | size（默认大小形式）
     maxEvents: 50000,            // 数量模式：事件条数上限
     maxEventsMB: 8,              // 大小模式：事件存储上限 MB
-    overflowStrategy: 1,
+    overflowStrategy: 1,     // 超额策略：1=淘汰最早(默认) 2=停止记录 3=清空明细只留曲线
     byteWarnPct: 90,             // 告警百分比（两种模式共用）
-    aggregateLimitMode: 'size',  // 聚合限制模式：count | size（默认大小形式）
-    maxAggregates: 10000,        // 数量模式：聚合键数上限
-    maxAggregatesMB: 2,          // 大小模式：聚合大小上限 MB
-    aggregateStrategy: 1,
-    aggregateRetainDays: 90,
     archiveMergeMB: 5,          // 归档分块阈值（MB），达到即新建/裂分
     archiveCleanPct: 50,        // 手动清理比例（%），删最旧 X% 已归档数据
     archiveAutoClean: false,    // 自动清理开关（上传归档后按限制模式保留策略）
@@ -106,6 +101,13 @@
     if (pct >= warnPct) el.storage.style.color = '#ff4d4f';
     else if (pct >= warnPct - 20) el.storage.style.color = '#ffd700';
     else el.storage.style.color = '';
+
+    // 停止记录提示（超额策略②：配额满后不再写入新事件）
+    if (stats.quotaStoppedAt) {
+      el.hint.textContent = '⛔ 配额已满，已停止记录新数据（超额策略：停止记录）。请推送归档或清理已归档数据后恢复';
+    } else if (!archivedView && el.hint.textContent.indexOf('📦 正在查看归档') !== 0) {
+      el.hint.textContent = '';
+    }
   }
 
   // ---------- 数据聚合 ----------
@@ -508,15 +510,6 @@
     maxEventsMBUsed: document.getElementById('adv-events-mb-used'),
     overflow: document.getElementById('adv-overflow-strategy'),
     byteWarn: document.getElementById('adv-byte-warn'),
-    aggLimitMode: document.getElementById('adv-agg-limit-mode'),
-    maxAgg: document.getElementById('adv-max-aggregates'),
-    maxAggItem: document.getElementById('adv-max-aggregates-item'),
-    maxAggUsed: document.getElementById('adv-aggregates-used'),
-    maxAggMB: document.getElementById('adv-max-agg-mb'),
-    maxAggMBItem: document.getElementById('adv-max-agg-mb-item'),
-    maxAggMBUsed: document.getElementById('adv-agg-mb-used'),
-    aggStrategy: document.getElementById('adv-aggregate-strategy'),
-    aggRetain: document.getElementById('adv-aggregate-retain'),
     recordComment: document.getElementById('adv-record-comment'),
     recordVideo: document.getElementById('adv-record-video'),
     save: document.getElementById('adv-save'),
@@ -524,11 +517,10 @@
     hint: document.getElementById('adv-hint'),
     saveData: document.getElementById('adv-save-data'),
     hintData: document.getElementById('adv-hint-data'),
-    saveAgg: document.getElementById('adv-save-agg'),
-    hintAgg: document.getElementById('adv-hint-agg'),
     archiveMergeMB: document.getElementById('adv-archive-merge-mb'),
     archiveCleanPct: document.getElementById('adv-archive-clean-pct'),
     archiveAutoClean: document.getElementById('adv-archive-auto-clean'),
+    archiveSave: document.getElementById('adv-archive-save'),
     archiveCleanBtn: document.getElementById('adv-archive-clean-btn'),
     archiveHint: document.getElementById('adv-archive-hint')
   };
@@ -538,9 +530,6 @@
     const em = advEl.eventLimitMode ? advEl.eventLimitMode.value : 'count';
     if (advEl.maxEventsItem) advEl.maxEventsItem.style.display = em === 'count' ? '' : 'none';
     if (advEl.maxEventsMBItem) advEl.maxEventsMBItem.style.display = em === 'size' ? '' : 'none';
-    const am = advEl.aggLimitMode ? advEl.aggLimitMode.value : 'count';
-    if (advEl.maxAggItem) advEl.maxAggItem.style.display = am === 'count' ? '' : 'none';
-    if (advEl.maxAggMBItem) advEl.maxAggMBItem.style.display = am === 'size' ? '' : 'none';
   }
 
   // 格式化字节为可读大小
@@ -550,24 +539,16 @@
     return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
   }
 
-  // 更新配额「已使用」显示：数量模式显示条数/键数，大小模式显示估算占用
+  // 更新配额「已使用」显示：数量模式显示条数，大小模式显示估算占用
   function updateQuotaUsed(stats) {
     if (!stats) return;
     const events = stats.events || [];
-    const aggKeys = Object.keys(stats.aggregates || {});
     const eventsBytes = events.length ? JSON.stringify(events).length * 2 : 0;
-    const aggBytes = aggKeys.length ? JSON.stringify(stats.aggregates).length * 2 : 0;
     const em = advEl.eventLimitMode ? advEl.eventLimitMode.value : 'count';
     if (em === 'count') {
       if (advEl.maxEventsUsed) advEl.maxEventsUsed.textContent = '已用 ' + events.length + ' 条';
     } else {
       if (advEl.maxEventsMBUsed) advEl.maxEventsMBUsed.textContent = '已用 ' + fmtBytes(eventsBytes);
-    }
-    const am = advEl.aggLimitMode ? advEl.aggLimitMode.value : 'count';
-    if (am === 'count') {
-      if (advEl.maxAggUsed) advEl.maxAggUsed.textContent = '已用 ' + aggKeys.length + ' 键';
-    } else {
-      if (advEl.maxAggMBUsed) advEl.maxAggMBUsed.textContent = '已用 ' + fmtBytes(aggBytes);
     }
   }
 
@@ -579,11 +560,6 @@
     if (advEl.maxEventsMB) advEl.maxEventsMB.value = cfg.maxEventsMB != null ? cfg.maxEventsMB : DEFAULTS.maxEventsMB;
     advEl.overflow.value = cfg.overflowStrategy;
     advEl.byteWarn.value = cfg.byteWarnPct;
-    if (advEl.aggLimitMode) advEl.aggLimitMode.value = cfg.aggregateLimitMode || 'size';
-    advEl.maxAgg.value = cfg.maxAggregates;
-    if (advEl.maxAggMB) advEl.maxAggMB.value = cfg.maxAggregatesMB != null ? cfg.maxAggregatesMB : DEFAULTS.maxAggregatesMB;
-    advEl.aggStrategy.value = cfg.aggregateStrategy;
-    advEl.aggRetain.value = cfg.aggregateRetainDays;
     if (advEl.archiveMergeMB) advEl.archiveMergeMB.value = cfg.archiveMergeMB != null ? cfg.archiveMergeMB : DEFAULTS.archiveMergeMB;
     if (advEl.archiveCleanPct) advEl.archiveCleanPct.value = cfg.archiveCleanPct != null ? cfg.archiveCleanPct : DEFAULTS.archiveCleanPct;
     if (advEl.archiveAutoClean) advEl.archiveAutoClean.checked = !!cfg.archiveAutoClean;
@@ -594,7 +570,6 @@
 
   function readAdvForm() {
     const evMode = advEl.eventLimitMode ? advEl.eventLimitMode.value : 'count';
-    const aggMode = advEl.aggLimitMode ? advEl.aggLimitMode.value : 'count';
     return {
       flushBatch: clampInt(advEl.batch.value, 1, 1000, DEFAULTS.flushBatch),
       flushInterval: clampInt(advEl.interval.value, 1, 300, DEFAULTS.flushInterval),
@@ -602,12 +577,9 @@
       maxEvents: clampInt(advEl.maxEvents.value, 0, 500000, DEFAULTS.maxEvents),
       maxEventsMB: advEl.maxEventsMB ? clampInt(advEl.maxEventsMB.value, 0, 50, DEFAULTS.maxEventsMB) : DEFAULTS.maxEventsMB,
       overflowStrategy: Number(advEl.overflow.value) || 1,
-      byteWarnPct: clampInt(advEl.byteWarn.value, 10, 100, DEFAULTS.byteWarnPct),
-      aggregateLimitMode: aggMode,
-      maxAggregates: clampInt(advEl.maxAgg.value, 0, 100000, DEFAULTS.maxAggregates),
-      maxAggregatesMB: advEl.maxAggMB ? clampInt(advEl.maxAggMB.value, 0, 20, DEFAULTS.maxAggregatesMB) : DEFAULTS.maxAggregatesMB,
-      aggregateStrategy: Number(advEl.aggStrategy.value) || 1,
-      aggregateRetainDays: clampInt(advEl.aggRetain.value, 0, 3650, DEFAULTS.aggregateRetainDays),
+      maxEventsMB: advEl.maxEventsMB ? clampInt(advEl.maxEventsMB.value, 0, 50, DEFAULTS.maxEventsMB) : DEFAULTS.maxEventsMB,
+      overflowStrategy: Number(advEl.overflow.value) || 1,
+      byteWarnPct: advEl.byteWarn ? clampInt(advEl.byteWarn.value, 1, 100, DEFAULTS.byteWarnPct) : DEFAULTS.byteWarnPct,
       archiveMergeMB: advEl.archiveMergeMB ? clampInt(advEl.archiveMergeMB.value, 1, 100, DEFAULTS.archiveMergeMB) : DEFAULTS.archiveMergeMB,
       archiveCleanPct: advEl.archiveCleanPct ? clampInt(advEl.archiveCleanPct.value, 0, 100, DEFAULTS.archiveCleanPct) : DEFAULTS.archiveCleanPct,
       archiveAutoClean: advEl.archiveAutoClean ? advEl.archiveAutoClean.checked : DEFAULTS.archiveAutoClean,
@@ -659,7 +631,6 @@
 
   if (advEl.save) advEl.save.addEventListener('click', () => saveAdvSettings());
   if (advEl.saveData) advEl.saveData.addEventListener('click', () => saveAdvSettings(advEl.hintData));
-  if (advEl.saveAgg) advEl.saveAgg.addEventListener('click', () => saveAdvSettings(advEl.hintAgg));
   if (advEl.reset) {
     advEl.reset.addEventListener('click', () => {
       fillAdvForm(DEFAULTS);
@@ -667,7 +638,11 @@
     });
   }
   if (advEl.eventLimitMode) advEl.eventLimitMode.addEventListener('change', syncLimitModeUI);
-  if (advEl.aggLimitMode) advEl.aggLimitMode.addEventListener('change', syncLimitModeUI);
+
+  // 归档设置保存按钮（保存完整高级设置表单，含归档字段）
+  if (advEl.archiveSave) {
+    advEl.archiveSave.addEventListener('click', () => saveAdvSettings(advEl.archiveHint));
+  }
 
   // 手动清理已归档数据（按比例删最旧，0=不删 100=全清）
   if (advEl.archiveCleanBtn) {
@@ -785,7 +760,7 @@
         if (typeof BilibanBackupSync !== 'undefined' && typeof BilibanBackupSync.setDataRepoVisibilityPref === 'function') {
           await BilibanBackupSync.setDataRepoVisibilityPref(ghEl.dataVisibility.value === 'private');
         }
-        ghEl.status.textContent = '✅ 已连接: ' + result.username + '（可见性偏好已保存）';
+        ghEl.status.textContent = '✅ 已保存设置并连接: ' + result.username + '（可见性已保存）';
         ghEl.status.style.color = '#7ecb20';
       } else {
         ghEl.status.textContent = '✗ ' + (result && result.error ? result.error : 'Token 无效');

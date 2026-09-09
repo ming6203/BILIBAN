@@ -19,13 +19,8 @@
     eventLimitMode: 'size', // 数据面板限制模式：count | size（默认大小形式）
     maxEvents: 50000,        // 数量模式：events 明细最大条数
     maxEventsMB: 8,          // 大小模式：事件数据存储上限 MB
-    overflowStrategy: 1,     // 超额策略：1=转聚合(默认) 2=淘汰最早 3=清空明细只留聚合
+    overflowStrategy: 1,     // 超额策略：1=淘汰最早(默认) 2=停止记录 3=清空明细只留曲线
     byteWarnPct: 90,         // 告警百分比（数量/大小模式共用）
-    aggregateLimitMode: 'size', // 聚合限制模式：count | size（默认大小形式）
-    maxAggregates: 10000,    // 数量模式：聚合键数上限
-    maxAggregatesMB: 2,      // 大小模式：聚合大小上限 MB
-    aggregateStrategy: 1,
-    aggregateRetainDays: 90,
     archiveMergeMB: 5,          // 归档分块阈值（MB）
     archiveCleanPct: 50,        // 手动清理比例（%）
     archiveAutoClean: false,    // 自动清理开关
@@ -98,22 +93,16 @@
       }
       if (overLimit) {
         if (config.overflowStrategy === 2) {
-          // 淘汰最早（数量模式按条数；大小模式二分裁到近似）
-          if (config.eventLimitMode === 'size') {
-            const limitMB = config.maxEventsMB != null ? config.maxEventsMB : DEFAULT_ADV.maxEventsMB;
-            const limitBytes = limitMB * 1024 * 1024;
-            while (events.length > 1 && JSON.stringify(events).length * 2 > limitBytes) {
-              events.shift();
-            }
-          } else {
-            const over = events.length - config.maxEvents;
-            events = events.slice(over);
-          }
+          // 策略 2：停止记录——配额满后不再写入新事件，旧数据完整保留；打标记供数据面板提示
+          data.meta = data.meta || {};
+          data.meta.quotaStoppedAt = Date.now();
+          await chrome.storage.local.set({ [EVENTS_KEY]: data });
+          return;
         } else if (config.overflowStrategy === 3) {
-          // 清空明细只留聚合（聚合表在 M5 完善，此处先仅保留 buckets 计数）
+          // 策略 3：清空明细只留曲线（buckets 计数保留）
           events = [];
         } else {
-          // 策略 1：停写明细转聚合（预留聚合表；此版本先裁剪到上限）
+          // 策略 1（默认）：淘汰最早——裁剪到配额内，曲线保留
           if (config.eventLimitMode === 'size') {
             const limitMB = config.maxEventsMB != null ? config.maxEventsMB : DEFAULT_ADV.maxEventsMB;
             const limitBytes = limitMB * 1024 * 1024;
@@ -124,58 +113,16 @@
             const over = events.length - config.maxEvents;
             events = events.slice(over);
           }
+          // 淘汰策略下配额恢复正常，清除停止记录标记
+          if (data.meta && data.meta.quotaStoppedAt) delete data.meta.quotaStoppedAt;
         }
+      } else if (data.meta && data.meta.quotaStoppedAt) {
+        // 配额未超限 → 已恢复记录，清除停止标记
+        delete data.meta.quotaStoppedAt;
       }
 
-      // ---- 聚合表维护：bvid+uid → {count, firstTs, lastTs}（供按用户/视频维度统计） ----
-      data.aggregates = data.aggregates || {};
-      for (const ev of batch) {
-        const key = (ev.videoBvid || 'unknown') + '_' + (ev.uid || 0);
-        const ts = ev.timestamp || now;
-        const ag = data.aggregates[key] || { count: 0, firstTs: ts, lastTs: ts };
-        ag.count++;
-        ag.lastTs = ts;
-        data.aggregates[key] = ag;
-      }
-
-      // 聚合保留期清理：retainDays > 0 时删除超过保留期未命中的键；0 = 不清理
-      if (config.aggregateRetainDays > 0) {
-        const cutoff = now - config.aggregateRetainDays * 86400000;
-        for (const k of Object.keys(data.aggregates)) {
-          if (data.aggregates[k].lastTs < cutoff) delete data.aggregates[k];
-        }
-      }
-
-      // 聚合配额控制：数量模式按键数，大小模式按字节估算；0 = 不限制
-      let aggOver = false;
-      if (config.aggregateLimitMode === 'size') {
-        const aggLimitMB = config.maxAggregatesMB != null ? config.maxAggregatesMB : DEFAULT_ADV.maxAggregatesMB;
-        if (aggLimitMB > 0) {
-          const aggBytes = Object.keys(data.aggregates).length ? JSON.stringify(data.aggregates).length * 2 : 0;
-          if (aggBytes > aggLimitMB * 1024 * 1024) aggOver = true;
-        }
-      } else {
-        if (config.maxAggregates > 0 && Object.keys(data.aggregates).length > config.maxAggregates) aggOver = true;
-      }
-      if (aggOver) {
-        if (config.aggregateStrategy === 3) {
-          // 策略 3：降级 time-bucket——清空聚合表，只保留按天计数
-          data.aggregates = {};
-        } else {
-          // 策略 1/2：按 lastTs 从旧到新淘汰至配额内（LRU 与保留期内共用此路径）
-          const limit = config.aggregateLimitMode === 'size'
-            ? (config.maxAggregatesMB != null ? config.maxAggregatesMB : DEFAULT_ADV.maxAggregatesMB) * 1024 * 1024
-            : (config.maxAggregates > 0 ? config.maxAggregates : 0);
-          const keys = Object.keys(data.aggregates).sort((a, b) => data.aggregates[a].lastTs - data.aggregates[b].lastTs);
-          while (keys.length > 1 && (
-            config.aggregateLimitMode === 'size'
-              ? JSON.stringify(data.aggregates).length * 2 > limit
-              : Object.keys(data.aggregates).length > limit
-          )) {
-            delete data.aggregates[keys.shift()];
-          }
-        }
-      }
+      // ---- 按天 time-bucket 计数已在上方随 events 维护（buckets 永不清理，曲线数据源） ----
+      // ---- 聚合表已移除（不再维护 bvid+uid 统计） ----
 
       data.events = events;
       data.meta = data.meta || {};
