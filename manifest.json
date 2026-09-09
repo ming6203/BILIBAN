@@ -47,6 +47,7 @@
       "js": [
         "lib/storage.js",
         "lib/github.js",
+        "content/stats-collector.js",
         "content/bilibili.js"
       ],
       "css": [

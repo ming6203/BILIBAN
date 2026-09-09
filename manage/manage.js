@@ -12,6 +12,8 @@
 const tabs = document.querySelectorAll('.tab');
 const tabBlacklist = document.getElementById('tab-blacklist');
 const tabScan = document.getElementById('tab-scan');
+const tabStats = document.getElementById('tab-stats');
+const tabAdvanced = document.getElementById('tab-advanced');
 
 const btnAddGroup = document.getElementById('btn-add-group');
 const btnAddChunk = document.getElementById('btn-add-chunk');
@@ -112,6 +114,18 @@ tabs.forEach(tab => {
     tab.classList.add('active');
     tabBlacklist.classList.toggle('active', tab.dataset.tab === 'blacklist');
     tabScan.classList.toggle('active', tab.dataset.tab === 'scan');
+    tabStats.classList.toggle('active', tab.dataset.tab === 'stats');
+    tabAdvanced.classList.toggle('active', tab.dataset.tab === 'advanced');
+    // 切到数据面板时渲染
+    if (tab.dataset.tab === 'stats' && window.__BILIBAN_STATS_UI__) {
+      window.__BILIBAN_STATS_UI__.render();
+    }
+    // 切到高级设置时加载设置表单
+    if (tab.dataset.tab === 'advanced' && window.__BILIBAN_STATS_UI__) {
+      window.__BILIBAN_STATS_UI__.loadAdvSettings();
+      window.__BILIBAN_STATS_UI__.loadBackupSettings();
+      window.__BILIBAN_STATS_UI__.loadGithubAccount();
+    }
   });
 });
 

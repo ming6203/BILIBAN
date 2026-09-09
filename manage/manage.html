@@ -17,6 +17,8 @@
       <nav class="tabs">
         <button class="tab active" data-tab="blacklist">📋 黑名单管理</button>
         <button class="tab" data-tab="scan">🔍 评论扫描</button>
+        <button class="tab" data-tab="stats">📊 数据面板</button>
+        <button class="tab" data-tab="advanced">⚙️ 高级设置</button>
       </nav>
     </header>
     <!-- ==================== 黑名单管理 ==================== -->
@@ -36,6 +38,133 @@
         <div class="empty-state">
           <div class="empty-icon">📋</div>
           <div class="empty-text">还没有屏蔽分组<br>点击上方按钮创建第一个分组</div>
+        </div>
+      </div>
+    </section>
+    <!-- ==================== 数据面板 ==================== -->
+    <section class="tab-content" id="tab-stats">
+      <div class="card stats-overview">
+        <div class="card-title">📊 使用概览</div>
+        <div class="stats-overview-grid">
+          <div class="stat-item"><div class="stat-num" id="stat-total">0</div><div class="stat-label">总触发次数</div></div>
+          <div class="stat-item"><div class="stat-num" id="stat-video">0</div><div class="stat-label">触发视频数</div></div>
+          <div class="stat-item"><div class="stat-num" id="stat-comment">0</div><div class="stat-label">触发评论数</div></div>
+          <div class="stat-item"><div class="stat-num" id="stat-7d">0</div><div class="stat-label">近 7 天</div></div>
+          <div class="stat-item"><div class="stat-num" id="stat-storage">0 / 0</div><div class="stat-label">已记录 / 配额</div></div>
+        </div>
+      </div>
+      <div class="card stats-chart-card">
+        <div class="card-title">频率曲线</div>
+        <div class="stats-chart-controls">
+          <select id="stats-granularity" class="small-select">
+            <option value="day">按天</option>
+            <option value="week">按周</option>
+            <option value="month">按月</option>
+          </select>
+          <select id="stats-range" class="small-select">
+            <option value="7">近 7 天</option>
+            <option value="30" selected>近 30 天</option>
+            <option value="90">近 90 天</option>
+          </select>
+          <span class="stats-chart-legend"><span class="legend-dot total"></span>总触发 <span class="legend-dot video"></span>视频 <span class="legend-dot comment"></span>评论</span>
+        </div>
+        <div class="stats-chart-wrap">
+          <canvas id="stats-chart" width="900" height="300"></canvas>
+          <div class="stats-chart-empty" id="stats-chart-empty" style="display:none">暂无数据，触发屏蔽后这里会显示频率曲线</div>
+        </div>
+      </div>
+      <div class="card stats-actions">
+        <button id="stats-refresh" class="secondary-btn">⟳ 刷新</button>
+        <button id="stats-clear" class="danger-btn">清空数据</button>
+        <span class="scan-hint" id="stats-hint"></span>
+      </div>
+    </section>
+    <!-- ==================== 高级设置 ==================== -->
+    <!-- ==================== 高级设置 ==================== -->
+    <section class="tab-content" id="tab-advanced">
+      <div class="card stats-advanced">
+        <div class="card-title">📊 数据面板设置</div>
+        <div class="adv-grid">
+          <label class="opt-item">限制模式
+            <select id="adv-event-limit-mode" class="small-select">
+              <option value="count">数量形式</option>
+              <option value="size" selected>大小形式</option>
+            </select>
+          </label>
+          <label class="opt-item" id="adv-max-events-item">缓存配额（事件上限）<input type="number" id="adv-max-events" class="num-input" min="0" max="500000" title="明细数组最大条数，0=不限制；达到后按超额策略处理"><span class="quota-used" id="adv-events-used"></span></label>
+          <label class="opt-item" id="adv-max-events-mb-item" style="display:none">存储上限（MB）<input type="number" id="adv-max-events-mb" class="num-input" min="0" max="50" title="事件数据占用估算上限，0=不限制；超过时按超额策略处理"><span class="quota-used" id="adv-events-mb-used"></span></label>
+          <label class="opt-item">批量刷盘阈值（条）<input type="number" id="adv-flush-batch" class="num-input" min="1" max="1000" title="内存缓冲累积到 N 条时刷盘"></label>
+          <label class="opt-item">批量刷盘定时（秒）<input type="number" id="adv-flush-interval" class="num-input" min="1" max="300" title="缓冲非空时超时刷盘，空缓冲不写入"></label>
+          <label class="opt-item">超额策略
+            <select id="adv-overflow-strategy" class="small-select">
+              <option value="1">转聚合（推荐）</option>
+              <option value="2">淘汰最早明细</option>
+              <option value="3">清空明细只留聚合</option>
+            </select>
+          </label>
+          <label class="opt-item">告警百分比（%）<input type="number" id="adv-byte-warn" class="num-input" min="10" max="100" title="达到配额（数量或大小）的 X% 时高亮提示"></label>
+        </div>
+        <div class="adv-actions">
+          <button id="adv-save-data" class="primary-btn">保存设置</button>
+          <span class="scan-hint" id="adv-hint-data"></span>
+        </div>
+      </div>
+      <div class="card stats-advanced">
+        <div class="card-title">🧩 聚合设置</div>
+        <div class="adv-grid">
+          <label class="opt-item">限制模式
+            <select id="adv-agg-limit-mode" class="small-select">
+              <option value="count">数量形式</option>
+              <option value="size" selected>大小形式</option>
+            </select>
+          </label>
+          <label class="opt-item" id="adv-max-aggregates-item">聚合配额（键数）<input type="number" id="adv-max-aggregates" class="num-input" min="0" max="100000" title="聚合表最多保留多少个 bvid+uid 键，0=不限制；达到后按清理策略处理"><span class="quota-used" id="adv-aggregates-used"></span></label>
+          <label class="opt-item" id="adv-max-agg-mb-item" style="display:none">聚合大小上限（MB）<input type="number" id="adv-max-agg-mb" class="num-input" min="0" max="20" title="聚合表占用估算上限，0=不限制；超过时清理"><span class="quota-used" id="adv-agg-mb-used"></span></label>
+          <label class="opt-item">聚合清理策略
+            <select id="adv-aggregate-strategy" class="small-select">
+              <option value="1">LRU 淘汰</option>
+              <option value="2">保留期内</option>
+              <option value="3">降级 time-bucket</option>
+            </select>
+          </label>
+          <label class="opt-item">聚合保留期（天）<input type="number" id="adv-aggregate-retain" class="num-input" min="0" max="3650" title="超过保留期的聚合键删除，0=不清理"></label>
+        </div>
+        <div class="adv-actions">
+          <button id="adv-save-agg" class="primary-btn">保存设置</button>
+          <span class="scan-hint" id="adv-hint-agg"></span>
+        </div>
+      </div>
+      <div class="card stats-advanced">
+        <div class="card-title">🗂️ 记录设置</div>
+        <div class="adv-grid">
+          <label class="opt-item checkbox-item"><input type="checkbox" id="adv-record-comment"> 记录评论命中</label>
+          <label class="opt-item checkbox-item"><input type="checkbox" id="adv-record-video"> 记录视频命中</label>
+        </div>
+        <div class="adv-actions">
+          <button id="adv-save" class="primary-btn">保存设置</button>
+          <button id="adv-reset" class="secondary-btn">恢复默认</button>
+          <span class="scan-hint" id="adv-hint"></span>
+        </div>
+      </div>
+      <div class="card stats-advanced">
+        <div class="card-title">☁️ 备份仓库设置</div>
+        <div class="adv-grid">
+          <label class="opt-item wide">备份仓库名称<input type="text" id="bk-repo-name" class="text-input" title="黑名单备份仓库名"><span style="margin-left:16px"></span><input type="checkbox" id="bk-same-repo" checked> 与黑名单同一仓库<span style="margin-left:16px"></span>独立数据仓库名称<input type="text" id="bk-data-repo" class="text-input" title="关闭同一仓库时数据单独存此仓库"></label>
+        </div>
+        <div class="adv-actions">
+          <button id="bk-save" class="primary-btn">保存备份设置</button>
+          <span class="scan-hint" id="bk-hint"></span>
+        </div>
+      </div>
+      <div class="card stats-advanced">
+        <div class="card-title">🔑 GitHub 账户设置</div>
+        <div class="adv-grid">
+          <label class="opt-item">GitHub Token<input type="password" id="gh-token-input" class="text-input" style="width:220px" placeholder="ghp_xxxx 或 github_pat_xxxx" title="需要 repo 权限"></label>
+          <label class="opt-item wide">黑名单仓库可见性<select id="gh-visibility" class="small-select"><option value="private">🔒 私有</option><option value="public">🌐 公共</option></select><span id="gh-data-vis-item"><span style="margin-left:16px"></span>数据仓库可见性<select id="gh-data-visibility" class="small-select"><option value="private">🔒 私有</option><option value="public">🌐 公共</option></select></span></label>
+        </div>
+        <div class="adv-actions">
+          <button id="gh-token-save" class="primary-btn">验证 Token</button>
+          <span class="scan-hint" id="gh-account-status"></span>
         </div>
       </div>
     </section>
@@ -134,6 +263,8 @@
   </div>
   <script src="../lib/storage.js"></script>
   <script src="../lib/github.js"></script>
+  <script src="../lib/backup-sync.js"></script>
   <script src="manage.js"></script>
+  <script src="stats.js"></script>
 </body>
 </html>

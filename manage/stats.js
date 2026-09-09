@@ -1,0 +1,579 @@
+/**
+ * BILIBAN 数据面板 (stats.js)
+ * 黑名单使用情况统计：概览卡 + Canvas 频率折线图（纯原生，无外部依赖）
+ * 由 manage.js 在切换到「数据面板」tab 时调用 __BILIBAN_STATS_UI__.render()
+ */
+
+(function() {
+  'use strict';
+
+  const DEFAULTS = {
+    flushBatch: 50,
+    flushInterval: 10,
+    eventLimitMode: 'size',      // 数据面板限制模式：count | size（默认大小形式）
+    maxEvents: 50000,            // 数量模式：事件条数上限
+    maxEventsMB: 8,              // 大小模式：事件存储上限 MB
+    overflowStrategy: 1,
+    byteWarnPct: 90,             // 告警百分比（两种模式共用）
+    aggregateLimitMode: 'size',  // 聚合限制模式：count | size（默认大小形式）
+    maxAggregates: 10000,        // 数量模式：聚合键数上限
+    maxAggregatesMB: 2,          // 大小模式：聚合大小上限 MB
+    aggregateStrategy: 1,
+    aggregateRetainDays: 90,
+    recordComment: true,
+    recordVideo: true,
+    recordSubtitle: false,
+    saveVideoTitle: false,
+    keepUidDetail: true
+  };
+
+  // DOM
+  const el = {
+    total: document.getElementById('stat-total'),
+    video: document.getElementById('stat-video'),
+    comment: document.getElementById('stat-comment'),
+    d7: document.getElementById('stat-7d'),
+    storage: document.getElementById('stat-storage'),
+    granularity: document.getElementById('stats-granularity'),
+    range: document.getElementById('stats-range'),
+    canvas: document.getElementById('stats-chart'),
+    empty: document.getElementById('stats-chart-empty'),
+    refresh: document.getElementById('stats-refresh'),
+    clear: document.getElementById('stats-clear'),
+    hint: document.getElementById('stats-hint')
+  };
+
+  let currentStats = null;   // 最近一次 getBlockStats 结果
+  let tooltip = null;        // tooltip 元素
+
+  // ---------- 概览卡 ----------
+  function renderOverview(stats) {
+    el.total.textContent = stats.total;
+    el.video.textContent = stats.videoCount;
+    el.comment.textContent = stats.commentCount;
+
+    // 近 7 天：从 buckets 算
+    let d7 = 0;
+    const now = new Date();
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+      const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+      d7 += (stats.buckets[key] || 0);
+    }
+    el.d7.textContent = d7;
+
+    // 已记录 / 配额（跟随限制模式：数量显示条数，大小显示占用；配额 0 = 只显已用）
+    const evMode = (currentAdv && currentAdv.eventLimitMode) || 'count';
+    const events = stats.events || [];
+    const bytesEst = events.length ? JSON.stringify(events).length * 2 : 0;
+    const warnPct = (currentAdv && currentAdv.byteWarnPct) || DEFAULTS.byteWarnPct;
+    let pct = 0;
+    if (evMode === 'size') {
+      const limitMB = (currentAdv && currentAdv.maxEventsMB != null) ? currentAdv.maxEventsMB : DEFAULTS.maxEventsMB;
+      if (limitMB > 0) {
+        const limitBytes = limitMB * 1024 * 1024;
+        el.storage.textContent = fmtBytes(bytesEst) + ' / ' + fmtBytes(limitBytes);
+        pct = Math.round(bytesEst / limitBytes * 100);
+      } else {
+        el.storage.textContent = fmtBytes(bytesEst); // 0 = 不限制，只显示已用大小
+      }
+    } else {
+      const quota = (currentAdv && currentAdv.maxEvents != null) ? currentAdv.maxEvents : DEFAULTS.maxEvents;
+      if (quota > 0) {
+        el.storage.textContent = stats.total + ' / ' + quota;
+        pct = Math.round(stats.total / quota * 100);
+      } else {
+        el.storage.textContent = stats.total; // 0 = 不限制，只显示已用条数
+      }
+    }
+    if (pct >= warnPct) el.storage.style.color = '#ff4d4f';
+    else if (pct >= warnPct - 20) el.storage.style.color = '#ffd700';
+    else el.storage.style.color = '';
+  }
+
+  // ---------- 数据聚合 ----------
+  // buckets: { 'YYYY-MM-DD': count }，聚合到 day/week/month 序列
+  function aggregateSeries(buckets, granularity, rangeDays) {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const start = new Date(today);
+    start.setDate(start.getDate() - (rangeDays - 1));
+
+    const pointKey = (d, g) => {
+      if (g === 'month') return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+      if (g === 'week') {
+        const day = (d.getDay() + 6) % 7;  // 周一为一周起点
+        const monday = new Date(d.getFullYear(), d.getMonth(), d.getDate() - day);
+        return monday.getFullYear() + '-' + String(monday.getMonth() + 1).padStart(2, '0') + '-' + String(monday.getDate()).padStart(2, '0');
+      }
+      return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    };
+    const label = (d, g) => {
+      if (g === 'month') return d.getFullYear() + '/' + (d.getMonth() + 1);
+      if (g === 'week') {
+        const day = (d.getDay() + 6) % 7;
+        const monday = new Date(d.getFullYear(), d.getMonth(), d.getDate() - day);
+        return (monday.getMonth() + 1) + '/' + monday.getDate() + '周';
+      }
+      return (d.getMonth() + 1) + '/' + d.getDate();
+    };
+
+    // 生成从 start 到 today 的所有时间点（含空值，保证曲线连续）
+    const series = [];
+    const index = new Map();
+    for (let d = new Date(start); d <= today; d.setDate(d.getDate() + 1)) {
+      const k = pointKey(d, granularity);
+      if (!index.has(k)) {
+        const item = { key: k, label: label(d, granularity), value: 0 };
+        index.set(k, series.length);
+        series.push(item);
+      }
+    }
+    // 填入 bucket 数据：bucket 是日粒度 key(YYYY-MM-DD)，需按目标粒度换算后累加
+    for (const key of Object.keys(buckets || {})) {
+      const dm = key.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (!dm) continue;
+      const d = new Date(Number(dm[1]), Number(dm[2]) - 1, Number(dm[3]));
+      if (isNaN(d.getTime()) || d < start || d > today) continue;
+      const k = pointKey(d, granularity);
+      if (index.has(k)) series[index.get(k)].value += buckets[key] || 0;
+    }
+    return series;
+  }
+
+  // ---------- Canvas 折线图 ----------
+  function drawChart(stats) {
+    const canvas = el.canvas;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    const padL = 36, padR = 12, padT = 16, padB = 26;
+    ctx.clearRect(0, 0, W, H);
+
+    const granularity = el.granularity.value;
+    const rangeDays = Number(el.range.value);
+    const series = aggregateSeries(stats.buckets || {}, granularity, rangeDays);
+    const values = series.map(s => s.value);
+    const maxVal = Math.max(1, ...values);
+    const plotW = W - padL - padR;
+    const plotH = H - padT - padB;
+
+    // 网格 + Y 轴
+    ctx.strokeStyle = '#3a3a3a';
+    ctx.fillStyle = '#888';
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'right';
+    const yTicks = 4;
+    for (let i = 0; i <= yTicks; i++) {
+      const y = padT + plotH - (i / yTicks) * plotH;
+      ctx.beginPath();
+      ctx.moveTo(padL, y);
+      ctx.lineTo(W - padR, y);
+      ctx.stroke();
+      const v = Math.round((i / yTicks) * maxVal);
+      ctx.fillText(String(v), padL - 4, y + 3);
+    }
+
+    // X 轴标签（稀疏显示）
+    ctx.textAlign = 'center';
+    const step = Math.max(1, Math.ceil(series.length / 8));
+    series.forEach((s, i) => {
+      if (i % step === 0) {
+        const x = padL + (series.length === 1 ? plotW / 2 : (i / (series.length - 1)) * plotW);
+        ctx.fillText(s.label, x, H - 8);
+      }
+    });
+
+    // 三条折线：total / video / comment
+    const colors = { total: '#fb7299', video: '#00a1d6', comment: '#ffd700' };
+    const videoB = stats.videoBuckets || {};
+    const commentB = stats.commentBuckets || {};
+    const plotLines = [
+      { key: 'total', data: series.map(s => s.value) },
+      { key: 'video', data: series.map(s => videoB[s.key] || 0) },
+      { key: 'comment', data: series.map(s => commentB[s.key] || 0) }
+    ];
+
+    for (const line of plotLines) {
+      ctx.strokeStyle = colors[line.key];
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      series.forEach((s, i) => {
+        const x = padL + (series.length === 1 ? plotW / 2 : (i / (series.length - 1)) * plotW);
+        const y = padT + plotH - (line.data[i] / maxVal) * plotH;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+
+    // 数据点（total 用实心点）
+    ctx.fillStyle = colors.total;
+    series.forEach((s, i) => {
+      if (s.value > 0) {
+        const x = padL + (series.length === 1 ? plotW / 2 : (i / (series.length - 1)) * plotW);
+        const y = padT + plotH - (s.value / maxVal) * plotH;
+        ctx.beginPath();
+        ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    });
+  }
+
+  // ---------- Tooltip ----------
+  function ensureTooltip() {
+    if (tooltip) return tooltip;
+    tooltip = document.createElement('div');
+    tooltip.className = 'stats-tooltip';
+    tooltip.style.cssText = 'position:fixed;display:none;background:#2b2b2b;border:1px solid #444;color:#ddd;padding:6px 10px;border-radius:6px;font-size:11px;pointer-events:none;z-index:99;box-shadow:0 2px 8px rgba(0,0,0,.4)';
+    document.body.appendChild(tooltip);
+    return tooltip;
+  }
+
+  // ---------- 主渲染 ----------
+  async function render() {
+    try {
+      // 加载高级设置（表单 + 配额显示）
+      await loadAdvSettings();
+
+      let stats = null;
+      if (typeof BilibanStorage !== 'undefined' && BilibanStorage.getBlockStats) {
+        stats = await BilibanStorage.getBlockStats();
+      }
+      if (!stats) stats = { total: 0, videoCount: 0, commentCount: 0, events: [], aggregates: {}, buckets: {}, lastSynced: 0 };
+      currentStats = stats;
+      updateQuotaUsed(stats);
+
+      renderOverview(stats);
+
+      const hasData = stats.total > 0 || Object.keys(stats.buckets || {}).length > 0;
+      if (!hasData) {
+        el.canvas.style.display = 'none';
+        el.empty.style.display = 'block';
+        el.hint.textContent = '';
+      } else {
+        el.canvas.style.display = 'block';
+        el.empty.style.display = 'none';
+        drawChart(stats);
+      }
+    } catch (e) {
+      el.hint.textContent = '数据面板渲染失败：' + (e.message || e);
+    }
+  }
+
+  let currentAdv = DEFAULTS;
+
+  // ---------- 事件 ----------
+  if (el.refresh) el.refresh.addEventListener('click', render);
+  if (el.granularity) el.granularity.addEventListener('change', () => { if (currentStats) drawChart(currentStats); });
+  if (el.range) el.range.addEventListener('change', () => { if (currentStats) drawChart(currentStats); });
+
+  if (el.clear) {
+    el.clear.addEventListener('click', async () => {
+      if (!confirm('确定清空所有屏蔽统计数据吗？此操作不可恢复。')) return;
+      try {
+        if (typeof BilibanStorage.clearBlockEvents === 'function') await BilibanStorage.clearBlockEvents();
+        el.hint.textContent = '已清空统计数据';
+        await render();
+      } catch (e) {
+        el.hint.textContent = '清空失败：' + (e.message || e);
+      }
+    });
+  }
+
+  // ---------- 高级设置 ----------
+  const advEl = {
+    batch: document.getElementById('adv-flush-batch'),
+    interval: document.getElementById('adv-flush-interval'),
+    eventLimitMode: document.getElementById('adv-event-limit-mode'),
+    maxEvents: document.getElementById('adv-max-events'),
+    maxEventsItem: document.getElementById('adv-max-events-item'),
+    maxEventsUsed: document.getElementById('adv-events-used'),
+    maxEventsMB: document.getElementById('adv-max-events-mb'),
+    maxEventsMBItem: document.getElementById('adv-max-events-mb-item'),
+    maxEventsMBUsed: document.getElementById('adv-events-mb-used'),
+    overflow: document.getElementById('adv-overflow-strategy'),
+    byteWarn: document.getElementById('adv-byte-warn'),
+    aggLimitMode: document.getElementById('adv-agg-limit-mode'),
+    maxAgg: document.getElementById('adv-max-aggregates'),
+    maxAggItem: document.getElementById('adv-max-aggregates-item'),
+    maxAggUsed: document.getElementById('adv-aggregates-used'),
+    maxAggMB: document.getElementById('adv-max-agg-mb'),
+    maxAggMBItem: document.getElementById('adv-max-agg-mb-item'),
+    maxAggMBUsed: document.getElementById('adv-agg-mb-used'),
+    aggStrategy: document.getElementById('adv-aggregate-strategy'),
+    aggRetain: document.getElementById('adv-aggregate-retain'),
+    recordComment: document.getElementById('adv-record-comment'),
+    recordVideo: document.getElementById('adv-record-video'),
+    save: document.getElementById('adv-save'),
+    reset: document.getElementById('adv-reset'),
+    hint: document.getElementById('adv-hint'),
+    saveData: document.getElementById('adv-save-data'),
+    hintData: document.getElementById('adv-hint-data'),
+    saveAgg: document.getElementById('adv-save-agg'),
+    hintAgg: document.getElementById('adv-hint-agg')
+  };
+
+  // 限制模式联动：切换时显示对应输入框与已用统计
+  function syncLimitModeUI() {
+    const em = advEl.eventLimitMode ? advEl.eventLimitMode.value : 'count';
+    if (advEl.maxEventsItem) advEl.maxEventsItem.style.display = em === 'count' ? '' : 'none';
+    if (advEl.maxEventsMBItem) advEl.maxEventsMBItem.style.display = em === 'size' ? '' : 'none';
+    const am = advEl.aggLimitMode ? advEl.aggLimitMode.value : 'count';
+    if (advEl.maxAggItem) advEl.maxAggItem.style.display = am === 'count' ? '' : 'none';
+    if (advEl.maxAggMBItem) advEl.maxAggMBItem.style.display = am === 'size' ? '' : 'none';
+  }
+
+  // 格式化字节为可读大小
+  function fmtBytes(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+  }
+
+  // 更新配额「已使用」显示：数量模式显示条数/键数，大小模式显示估算占用
+  function updateQuotaUsed(stats) {
+    if (!stats) return;
+    const events = stats.events || [];
+    const aggKeys = Object.keys(stats.aggregates || {});
+    const eventsBytes = events.length ? JSON.stringify(events).length * 2 : 0;
+    const aggBytes = aggKeys.length ? JSON.stringify(stats.aggregates).length * 2 : 0;
+    const em = advEl.eventLimitMode ? advEl.eventLimitMode.value : 'count';
+    if (em === 'count') {
+      if (advEl.maxEventsUsed) advEl.maxEventsUsed.textContent = '已用 ' + events.length + ' 条';
+    } else {
+      if (advEl.maxEventsMBUsed) advEl.maxEventsMBUsed.textContent = '已用 ' + fmtBytes(eventsBytes);
+    }
+    const am = advEl.aggLimitMode ? advEl.aggLimitMode.value : 'count';
+    if (am === 'count') {
+      if (advEl.maxAggUsed) advEl.maxAggUsed.textContent = '已用 ' + aggKeys.length + ' 键';
+    } else {
+      if (advEl.maxAggMBUsed) advEl.maxAggMBUsed.textContent = '已用 ' + fmtBytes(aggBytes);
+    }
+  }
+
+  function fillAdvForm(cfg) {
+    advEl.batch.value = cfg.flushBatch;
+    advEl.interval.value = cfg.flushInterval;
+    if (advEl.eventLimitMode) advEl.eventLimitMode.value = cfg.eventLimitMode || 'size';
+    advEl.maxEvents.value = cfg.maxEvents;
+    if (advEl.maxEventsMB) advEl.maxEventsMB.value = cfg.maxEventsMB != null ? cfg.maxEventsMB : DEFAULTS.maxEventsMB;
+    advEl.overflow.value = cfg.overflowStrategy;
+    advEl.byteWarn.value = cfg.byteWarnPct;
+    if (advEl.aggLimitMode) advEl.aggLimitMode.value = cfg.aggregateLimitMode || 'size';
+    advEl.maxAgg.value = cfg.maxAggregates;
+    if (advEl.maxAggMB) advEl.maxAggMB.value = cfg.maxAggregatesMB != null ? cfg.maxAggregatesMB : DEFAULTS.maxAggregatesMB;
+    advEl.aggStrategy.value = cfg.aggregateStrategy;
+    advEl.aggRetain.value = cfg.aggregateRetainDays;
+    advEl.recordComment.checked = !!cfg.recordComment;
+    advEl.recordVideo.checked = !!cfg.recordVideo;
+    syncLimitModeUI();
+  }
+
+  function readAdvForm() {
+    const evMode = advEl.eventLimitMode ? advEl.eventLimitMode.value : 'count';
+    const aggMode = advEl.aggLimitMode ? advEl.aggLimitMode.value : 'count';
+    return {
+      flushBatch: clampInt(advEl.batch.value, 1, 1000, DEFAULTS.flushBatch),
+      flushInterval: clampInt(advEl.interval.value, 1, 300, DEFAULTS.flushInterval),
+      eventLimitMode: evMode,
+      maxEvents: clampInt(advEl.maxEvents.value, 0, 500000, DEFAULTS.maxEvents),
+      maxEventsMB: advEl.maxEventsMB ? clampInt(advEl.maxEventsMB.value, 0, 50, DEFAULTS.maxEventsMB) : DEFAULTS.maxEventsMB,
+      overflowStrategy: Number(advEl.overflow.value) || 1,
+      byteWarnPct: clampInt(advEl.byteWarn.value, 10, 100, DEFAULTS.byteWarnPct),
+      aggregateLimitMode: aggMode,
+      maxAggregates: clampInt(advEl.maxAgg.value, 0, 100000, DEFAULTS.maxAggregates),
+      maxAggregatesMB: advEl.maxAggMB ? clampInt(advEl.maxAggMB.value, 0, 20, DEFAULTS.maxAggregatesMB) : DEFAULTS.maxAggregatesMB,
+      aggregateStrategy: Number(advEl.aggStrategy.value) || 1,
+      aggregateRetainDays: clampInt(advEl.aggRetain.value, 0, 3650, DEFAULTS.aggregateRetainDays),
+      recordComment: advEl.recordComment.checked,
+      recordVideo: advEl.recordVideo.checked,
+      recordSubtitle: DEFAULTS.recordSubtitle,
+      saveVideoTitle: DEFAULTS.saveVideoTitle,
+      keepUidDetail: DEFAULTS.keepUidDetail
+    };
+  }
+
+  function clampInt(v, min, max, dflt) {
+    const n = parseInt(v, 10);
+    if (isNaN(n)) return dflt;
+    return Math.max(min, Math.min(max, n));
+  }
+
+  async function loadAdvSettings() {
+    try {
+      if (typeof BilibanStorage.getAdvancedSettings === 'function') {
+        const saved = await BilibanStorage.getAdvancedSettings();
+        currentAdv = Object.assign({}, DEFAULTS, saved || {});
+      } else {
+        currentAdv = Object.assign({}, DEFAULTS);
+      }
+    } catch (e) {
+      currentAdv = Object.assign({}, DEFAULTS);
+    }
+    fillAdvForm(currentAdv);
+    return currentAdv;
+  }
+
+  async function saveAdvSettings(hintEl) {
+    const cfg = readAdvForm();
+    try {
+      if (typeof BilibanStorage.setAdvancedSettings === 'function') {
+        await BilibanStorage.setAdvancedSettings(cfg);
+      }
+      currentAdv = cfg;
+      const h = hintEl || advEl.hint;
+      h.textContent = '✅ 已保存，采集端下次刷盘生效';
+      h.style.color = '#7ecb20';
+    } catch (e) {
+      const h = hintEl || advEl.hint;
+      h.textContent = '保存失败：' + (e.message || e);
+      h.style.color = '#ff4d4f';
+    }
+  }
+
+  if (advEl.save) advEl.save.addEventListener('click', () => saveAdvSettings());
+  if (advEl.saveData) advEl.saveData.addEventListener('click', () => saveAdvSettings(advEl.hintData));
+  if (advEl.saveAgg) advEl.saveAgg.addEventListener('click', () => saveAdvSettings(advEl.hintAgg));
+  if (advEl.reset) {
+    advEl.reset.addEventListener('click', () => {
+      fillAdvForm(DEFAULTS);
+      saveAdvSettings();
+    });
+  }
+  if (advEl.eventLimitMode) advEl.eventLimitMode.addEventListener('change', syncLimitModeUI);
+  if (advEl.aggLimitMode) advEl.aggLimitMode.addEventListener('change', syncLimitModeUI);
+
+  // ---------- 备份仓库设置 ----------
+  const bkEl = {
+    repoName: document.getElementById('bk-repo-name'),
+    sameRepo: document.getElementById('bk-same-repo'),
+    dataRepo: document.getElementById('bk-data-repo'),
+    save: document.getElementById('bk-save'),
+    hint: document.getElementById('bk-hint')
+  };
+
+  async function loadBackupSettings() {
+    try {
+      if (typeof BilibanBackupSync === 'undefined') return;
+      const s = await BilibanBackupSync.getSettings();
+      bkEl.repoName.value = s.repoName;
+      bkEl.sameRepo.checked = !!s.sameRepo;
+      bkEl.dataRepo.value = s.dataRepoName;
+      bkEl.dataRepo.disabled = !!s.sameRepo;
+    } catch (e) { /* 忽略 */ }
+  }
+
+  async function saveBackupSettings() {
+    if (typeof BilibanBackupSync === 'undefined') {
+      bkEl.hint.textContent = '备份模块未加载';
+      bkEl.hint.style.color = '#ff4d4f';
+      return;
+    }
+    try {
+      await BilibanBackupSync.setSettings({
+        repoName: bkEl.repoName.value.trim() || 'BILI-Blacklist',
+        sameRepo: bkEl.sameRepo.checked,
+        dataRepoName: bkEl.dataRepo.value.trim() || 'BILI-Blacklist-Data'
+      });
+      bkEl.hint.textContent = '✅ 备份仓库设置已保存';
+      bkEl.hint.style.color = '#7ecb20';
+    } catch (e) {
+      bkEl.hint.textContent = '保存失败：' + (e.message || e);
+      bkEl.hint.style.color = '#ff4d4f';
+    }
+  }
+
+  if (bkEl.save) bkEl.save.addEventListener('click', saveBackupSettings);
+  if (bkEl.sameRepo) {
+    bkEl.sameRepo.addEventListener('change', () => {
+      bkEl.dataRepo.disabled = bkEl.sameRepo.checked;
+      // 同仓库时隐藏「数据仓库可见性」选择（同一仓库则可见性跟随黑名单仓库）
+      const visItem = document.getElementById('gh-data-vis-item');
+      if (visItem) visItem.style.display = bkEl.sameRepo.checked ? 'none' : '';
+    });
+  }
+
+  // ---------- GitHub 账户设置 ----------
+  const ghEl = {
+    tokenInput: document.getElementById('gh-token-input'),
+    visibility: document.getElementById('gh-visibility'),
+    dataVisibility: document.getElementById('gh-data-visibility'),
+    save: document.getElementById('gh-token-save'),
+    status: document.getElementById('gh-account-status')
+  };
+
+  async function loadGithubAccount() {
+    try {
+      if (typeof BilibanGithubSync === 'undefined') return;
+      const token = await BilibanGithubSync.getToken();
+      if (token) ghEl.tokenInput.value = token;
+      const isPrivate = await BilibanGithubSync.getRepoVisibilityPref();
+      ghEl.visibility.value = isPrivate ? 'private' : 'public';
+      // 数据仓库可见性
+      if (typeof BilibanBackupSync !== 'undefined' && typeof BilibanBackupSync.getDataRepoVisibilityPref === 'function') {
+        const dataPriv = await BilibanBackupSync.getDataRepoVisibilityPref();
+        ghEl.dataVisibility.value = dataPriv ? 'private' : 'public';
+      }
+      // 同仓库时隐藏数据可见性
+      const visItem = document.getElementById('gh-data-vis-item');
+      if (bkEl.sameRepo && visItem) visItem.style.display = bkEl.sameRepo.checked ? 'none' : '';
+    } catch (e) { /* 忽略 */ }
+  }
+
+  async function saveGithubAccount() {
+    if (typeof BilibanGithubSync === 'undefined') {
+      ghEl.status.textContent = 'GitHub 模块未加载';
+      ghEl.status.style.color = '#ff4d4f';
+      return;
+    }
+    const token = ghEl.tokenInput.value.trim();
+    if (!token) { ghEl.status.textContent = '请输入 Token'; ghEl.status.style.color = '#ff4d4f'; return; }
+    ghEl.status.textContent = '验证中...';
+    ghEl.status.style.color = '';
+    try {
+      await BilibanGithubSync.setToken(token);
+      const result = await BilibanGithubSync.validateToken();
+      if (result && result.valid) {
+        // 保存可见性偏好
+        await BilibanGithubSync.setRepoVisibilityPref(ghEl.visibility.value === 'private');
+        if (typeof BilibanBackupSync !== 'undefined' && typeof BilibanBackupSync.setDataRepoVisibilityPref === 'function') {
+          await BilibanBackupSync.setDataRepoVisibilityPref(ghEl.dataVisibility.value === 'private');
+        }
+        ghEl.status.textContent = '✅ 已连接: ' + result.username + '（可见性偏好已保存）';
+        ghEl.status.style.color = '#7ecb20';
+      } else {
+        ghEl.status.textContent = '✗ ' + (result && result.error ? result.error : 'Token 无效');
+        ghEl.status.style.color = '#ff4d4f';
+      }
+    } catch (e) {
+      ghEl.status.textContent = '✗ 验证失败: ' + (e.message || e);
+      ghEl.status.style.color = '#ff4d4f';
+    }
+  }
+
+  if (ghEl.save) ghEl.save.addEventListener('click', saveGithubAccount);
+  if (ghEl.visibility) {
+    ghEl.visibility.addEventListener('change', async () => {
+      try {
+        if (typeof BilibanGithubSync !== 'undefined') await BilibanGithubSync.setRepoVisibilityPref(ghEl.visibility.value === 'private');
+      } catch (e) { /* 忽略 */ }
+    });
+  }
+  if (ghEl.dataVisibility) {
+    ghEl.dataVisibility.addEventListener('change', async () => {
+      try {
+        if (typeof BilibanBackupSync !== 'undefined' && typeof BilibanBackupSync.setDataRepoVisibilityPref === 'function') {
+          await BilibanBackupSync.setDataRepoVisibilityPref(ghEl.dataVisibility.value === 'private');
+        }
+      } catch (e) { /* 忽略 */ }
+    });
+  }
+
+  // ---------- 对外接口 ----------
+  window.__BILIBAN_STATS_UI__ = {
+    render: render,
+    loadAdvSettings: loadAdvSettings,
+    loadBackupSettings: loadBackupSettings,
+    loadGithubAccount: loadGithubAccount
+  };
+})();

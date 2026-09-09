@@ -71,26 +71,34 @@
           <div class="github-link" id="github-link" style="display:none">
             <a href="#" target="_blank" id="github-link-url">查看云端备份</a>
           </div>
+
+        <!-- 数据备份（聚合/事件/设置） -->
+        <div class="github-section">
+          <label class="github-label">数据备份</label>
+          <div class="github-hint">备份聚合统计、事件数据与各设置到仓库 data/ 目录</div>
+          <div class="github-actions">
+            <button id="other-push" class="github-action-btn push">
+              <span class="btn-icon">☁️</span><span>推送数据到云</span>
+            </button>
+            <button id="other-restore" class="github-action-btn pull">
+              <span class="btn-icon">🔄</span><span>从云端恢复</span>
+            </button>
+          </div>
+          <div class="github-hint" id="other-status"></div>
+        </div>
+        <div class="github-section">
+          <label class="github-label">云端恢复（按仓库链接）</label>
+          <div class="github-input-row">
+            <input type="text" id="other-repo-input" placeholder="owner/repo 或完整 GitHub 仓库 URL" class="github-input">
+            <button id="other-browse" class="primary-btn-sm">浏览</button>
+          </div>
+          <div class="github-hint">输入其他备份仓库的链接，列出其 data/ 目录内容后按规范路径恢复</div>
+          <div class="github-hint" id="other-browse-status"></div>
+          <div class="other-file-list" id="other-file-list"></div>
+        </div>
         </div>
 
         <!-- 设置（置于底部） -->
-        <div class="github-section" id="github-token-section">
-          <label class="github-label">GitHub Token</label>
-          <div class="github-input-row">
-            <input type="password" id="github-token-input" placeholder="ghp_xxxx 或 github_pat_xxxx" class="github-input">
-            <button id="github-token-save" class="primary-btn-sm">验证</button>
-          </div>
-          <div class="github-hint" id="github-token-status"></div>
-          <div class="github-hint">需要 <code>repo</code> 权限，在 <a href="https://github.com/settings/tokens/new?scopes=repo&description=BILIBAN" target="_blank">GitHub Settings</a> 创建</div>
-        </div>
-        <div class="github-section" id="github-visibility-section">
-          <label class="github-label">仓库可见性</label>
-          <div class="visibility-toggle">
-            <button id="vis-private" class="visibility-option private active" data-vis="private">🔒 私有</button>
-            <button id="vis-public" class="visibility-option public" data-vis="public">🌐 公共</button>
-          </div>
-          <div class="github-hint" id="visibility-status">私有仓库仅自己可见；公共仓库可被社区订阅。切换后在下一次推送时自动生效。</div>
-        </div>
       </div>
 
       <!-- Tab: 社区订阅 -->
@@ -116,6 +124,7 @@
           <label class="github-label">已订阅 (<span id="source-count">0</span>)</label>
           <div class="source-list" id="source-list"></div>
         </div>
+
       </div>
     </div>
   </div>
@@ -137,6 +146,7 @@
 
   <script src="../lib/storage.js"></script>
   <script src="../lib/github.js"></script>
+  <script src="../lib/backup-sync.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

@@ -17,9 +17,6 @@ const modalConfirm = document.getElementById('modal-confirm');
 
 // GitHub 相关
 const githubTabs = document.querySelectorAll('.github-tab');
-const githubTokenInput = document.getElementById('github-token-input');
-const githubTokenSave = document.getElementById('github-token-save');
-const githubTokenStatus = document.getElementById('github-token-status');
 const githubSyncSection = document.getElementById('github-sync-section');
 const githubUserInfo = document.getElementById('github-user-info');
 const githubPush = document.getElementById('github-push');
@@ -28,10 +25,6 @@ const githubSyncStatus = document.getElementById('github-sync-status');
 const githubLink = document.getElementById('github-link');
 const githubLinkUrl = document.getElementById('github-link-url');
 
-// 仓库可见性
-const visPrivate = document.getElementById('vis-private');
-const visPublic = document.getElementById('vis-public');
-const visibilityStatus = document.getElementById('visibility-status');
 
 // 分块相关
 const chunkList = document.getElementById('chunk-list');
@@ -138,12 +131,36 @@ fileImport.addEventListener('change', async (e) => {
 
 // ==================== GitHub 面板 ====================
 
-// 弹窗即云同步界面：打开时自动加载已保存的 Token 与订阅源
+// 弹窗即云同步界面：打开时静默验证 Token 与加载订阅源
 async function initGithubPanel() {
   const token = await BilibanGithubSync.getToken();
   if (token) {
-    githubTokenInput.value = token;
-    await checkGithubToken();
+    try {
+      const result = await BilibanGithubSync.validateToken();
+      if (result && result.valid) {
+        githubSyncSection.style.display = 'block';
+        githubUserInfo.textContent = '👤 ' + result.username;
+        await renderChunks();
+        const status = await BilibanGithubSync.getSyncStatus();
+        if (status.synced) {
+          githubSyncStatus.textContent = status.message || '上次同步: ' + new Date(status.updatedAt).toLocaleString();
+          githubSyncStatus.className = 'github-hint github-status-ok';
+          githubLink.style.display = 'block';
+          if (status.chunks && status.chunks.length > 0) {
+            githubLinkUrl.href = status.chunks[0].url;
+          }
+        } else {
+          githubSyncStatus.textContent = status.reason || '未同步'; githubSyncStatus.className = 'github-hint';
+          githubLink.style.display = 'none';
+        }
+      } else {
+        githubSyncSection.style.display = 'none';
+      }
+    } catch (e) {
+      githubSyncSection.style.display = 'none';
+    }
+  } else {
+    githubSyncSection.style.display = 'none';
   }
   await renderSources();
 }
@@ -159,84 +176,7 @@ githubTabs.forEach(tab => {
   });
 });
 
-// Token 验证
-async function checkGithubToken() {
-  const token = githubTokenInput.value.trim();
-  if (!token) { githubTokenStatus.textContent = '请输入 Token'; githubTokenStatus.className = 'github-hint github-status-err'; return; }
-  githubTokenStatus.textContent = '验证中...'; githubTokenStatus.className = 'github-hint github-status-loading';
-  await BilibanGithubSync.setToken(token);
-  const result = await BilibanGithubSync.validateToken();
-  if (result.valid) {
-    githubTokenStatus.textContent = '✓ 已连接: ' + result.username;
-    githubTokenStatus.className = 'github-hint github-status-ok';
-    githubSyncSection.style.display = 'block';
-    githubUserInfo.textContent = '👤 ' + result.username;
 
-    // 渲染分块列表
-    await renderChunks();
-
-    // 初始化仓库可见性状态
-    await initVisibilityUI();
-
-    const status = await BilibanGithubSync.getSyncStatus();
-    if (status.synced) {
-      githubSyncStatus.textContent = status.message || '上次同步: ' + new Date(status.updatedAt).toLocaleString();
-      githubSyncStatus.className = 'github-hint github-status-ok';
-      githubLink.style.display = 'block';
-      if (status.chunks && status.chunks.length > 0) {
-        githubLinkUrl.href = status.chunks[0].url;
-      }
-    } else {
-      githubSyncStatus.textContent = status.reason || '未同步'; githubSyncStatus.className = 'github-hint';
-      githubLink.style.display = 'none';
-    }
-  } else {
-    githubTokenStatus.textContent = '✗ ' + result.error;
-    githubTokenStatus.className = 'github-hint github-status-err';
-    githubSyncSection.style.display = 'none';
-  }
-}
-githubTokenSave.addEventListener('click', checkGithubToken);
-
-// 仓库可见性切换
-async function initVisibilityUI() {
-  const isPrivate = await BilibanGithubSync.getRepoVisibilityPref();
-  updateVisibilityButtons(isPrivate);
-}
-
-function updateVisibilityButtons(isPrivate) {
-  visPrivate.classList.toggle('active', isPrivate);
-  visPublic.classList.toggle('active', !isPrivate);
-  visPrivate.disabled = isPrivate;
-  visPublic.disabled = !isPrivate;
-}
-
-async function applyVisibility(isPrivate) {
-  await BilibanGithubSync.setRepoVisibilityPref(isPrivate);
-  updateVisibilityButtons(isPrivate);
-
-  const label = isPrivate ? '私有' : '公共';
-  visibilityStatus.textContent = '正在切换仓库为' + label + '...';
-  visibilityStatus.className = 'github-hint github-status-loading';
-
-  try {
-    const result = await BilibanGithubSync.syncRepoVisibility();
-    if (result.created === false) {
-      visibilityStatus.textContent = '✓ 偏好已保存：推送时将创建' + label + '仓库';
-      visibilityStatus.className = 'github-hint github-status-ok';
-    } else {
-      visibilityStatus.textContent = '✓ 仓库已切换为' + label +
-        (result.changed ? '' : '（本来就是' + label + '）');
-      visibilityStatus.className = 'github-hint github-status-ok';
-    }
-  } catch (e) {
-    visibilityStatus.textContent = '✗ 切换失败: ' + e.message + '（将在下次推送时重试）';
-    visibilityStatus.className = 'github-hint github-status-err';
-  }
-}
-
-visPrivate.addEventListener('click', () => applyVisibility(true));
-visPublic.addEventListener('click', () => applyVisibility(false));
 
 // 推送全部
 githubPush.addEventListener('click', async () => {
@@ -582,6 +522,121 @@ async function renderSources() {
   });
 }
 
+
+// ==================== 其他数据（聚合/事件/设置备份） ====================
+
+const otherPush = document.getElementById('other-push');
+const otherRestore = document.getElementById('other-restore');
+const otherStatus = document.getElementById('other-status');
+const otherRepoInput = document.getElementById('other-repo-input');
+const otherBrowse = document.getElementById('other-browse');
+const otherBrowseStatus = document.getElementById('other-browse-status');
+const otherFileList = document.getElementById('other-file-list');
+
+async function ensureBackupLib() {
+  if (typeof BilibanBackupSync === 'undefined') {
+    throw new Error('备份模块未加载，请刷新扩展');
+  }
+}
+
+function otherStatusText(el, text, color) {
+  el.textContent = text;
+  el.style.color = color || '';
+}
+
+if (otherPush) {
+  otherPush.addEventListener('click', async () => {
+    otherPush.disabled = true;
+    try {
+      await ensureBackupLib();
+      otherStatusText(otherStatus, '推送中...');
+      const results = await BilibanBackupSync.pushAllData();
+      const ok = results.filter(r => r.ok).length;
+      const fail = results.length - ok;
+      otherStatusText(otherStatus, '✅ 已推送 ' + ok + '/' + results.length + ' 项数据' + (fail ? '，' + fail + ' 项失败' : ''), fail ? '#ff4d4f' : '#7ecb20');
+      renderOtherFileList();
+    } catch (e) {
+      otherStatusText(otherStatus, '❌ 推送失败: ' + (e.message || e), '#ff4d4f');
+    } finally {
+      otherPush.disabled = false;
+    }
+  });
+}
+
+if (otherRestore) {
+  otherRestore.addEventListener('click', async () => {
+    if (!confirm('确定从云端恢复其他数据吗？将覆盖本地相应数据。')) return;
+    otherRestore.disabled = true;
+    try {
+      await ensureBackupLib();
+      otherStatusText(otherStatus, '恢复中...');
+      const result = await BilibanBackupSync.restoreAllData('overwrite');
+      const ok = result.restored.filter(r => r.ok).length;
+      otherStatusText(otherStatus, '✅ 已恢复 ' + ok + '/' + result.restored.length + ' 项' + (result.errors ? '，' + result.errors + ' 项失败' : ''), result.errors ? '#ff4d4f' : '#7ecb20');
+    } catch (e) {
+      otherStatusText(otherStatus, '❌ 恢复失败: ' + (e.message || e), '#ff4d4f');
+    } finally {
+      otherRestore.disabled = false;
+    }
+  });
+}
+
+if (otherBrowse) {
+  otherBrowse.addEventListener('click', async () => {
+    const ref = otherRepoInput.value.trim();
+    if (!ref) { otherStatusText(otherBrowseStatus, '请输入仓库链接', '#ff4d4f'); return; }
+    try {
+      await ensureBackupLib();
+      const parsed = BilibanBackupSync.parseRepoRef(ref);
+      if (!parsed) { otherStatusText(otherBrowseStatus, '无法识别仓库链接，支持 owner/repo 或完整 URL', '#ff4d4f'); return; }
+      otherStatusText(otherBrowseStatus, '正在获取 data/ 目录...');
+      const files = await BilibanBackupSync.listDataFilesFromRepo(parsed);
+      renderOtherFileList(files, parsed);
+      otherStatusText(otherBrowseStatus, files.length ? '找到 ' + files.length + ' 个数据文件' : '该仓库没有 data/ 目录或数据文件');
+    } catch (e) {
+      otherStatusText(otherBrowseStatus, '❌ 浏览失败: ' + (e.message || e), '#ff4d4f');
+    }
+  });
+}
+
+async function renderOtherFileList(files, repoRef) {
+  if (!otherFileList) return;
+  try {
+    if (!files) {
+      await ensureBackupLib();
+      files = await BilibanBackupSync.listDataFiles();
+    }
+    if (!files || files.length === 0) {
+      otherFileList.innerHTML = '<div class="github-hint">暂无数据文件</div>';
+      return;
+    }
+    otherFileList.innerHTML = files.map(f =>
+      '<div class="source-item">' +
+        '<span>📄 ' + f.name + '.json</span>' +
+        '<span style="color:#888;font-size:11px">' + (f.size || 0) + ' B</span>' +
+        '<button class="secondary-btn-sm other-restore-one" data-name="' + f.name + '">恢复</button>' +
+      '</div>'
+    ).join('');
+    otherFileList.querySelectorAll('.other-restore-one').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const name = btn.dataset.name;
+        try {
+          await ensureBackupLib();
+          const payload = repoRef ? await BilibanBackupSync.readDataFileFromRepo(name, repoRef) : await BilibanBackupSync.readDataFile(name);
+          if (payload == null) { otherStatusText(otherBrowseStatus, '读取失败', '#ff4d4f'); return; }
+          const df = BilibanBackupSync.DATA_FILES.find(d => d.name === name);
+          if (!df) { otherStatusText(otherBrowseStatus, '未知文件类型', '#ff4d4f'); return; }
+          await chrome.storage.local.set({ [df.key]: payload });
+          otherStatusText(otherBrowseStatus, '✅ 已恢复 ' + name + '.json');
+        } catch (e) {
+          otherStatusText(otherBrowseStatus, '❌ ' + (e.message || e), '#ff4d4f');
+        }
+      });
+    });
+  } catch (e) {
+    otherFileList.innerHTML = '<div class="github-hint">获取失败: ' + (e.message || e) + '</div>';
+  }
+}
 // ==================== 初始化 ====================
 
 initGithubPanel();

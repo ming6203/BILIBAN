@@ -421,3 +421,32 @@ body {
   font-size: 13px; z-index: 99999; opacity: 0; transition: opacity 0.3s;
   pointer-events: none; box-shadow: 0 4px 12px rgba(0,0,0,0.4);
 }
+
+/* ============ 数据面板 ============ */
+.stats-overview { margin-bottom: 14px; }
+.stats-overview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+.stat-item { background: #2a2a2a; border: 1px solid #3c3c3c; border-radius: 8px; padding: 12px; text-align: center; }
+.stat-num { font-size: 22px; font-weight: 700; color: #fb7299; }
+.stat-label { font-size: 12px; color: #888; margin-top: 4px; }
+.stats-chart-card { margin-bottom: 14px; }
+.stats-chart-controls { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+.stats-chart-legend { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #aaa; margin-left: 8px; }
+.legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.legend-dot.total { background: #fb7299; }
+.legend-dot.video { background: #00a1d6; }
+.legend-dot.comment { background: #ffd700; }
+.stats-chart-wrap { position: relative; }
+.stats-chart-wrap canvas { width: 100%; height: auto; background: #222; border: 1px solid #3c3c3c; border-radius: 8px; }
+.stats-chart-empty { padding: 40px; text-align: center; color: #888; font-size: 13px; border: 1px dashed #3c3c3c; border-radius: 8px; }
+.stats-actions { display: flex; align-items: center; gap: 10px; }
+.stats-actions .scan-hint { margin-left: 8px; }
+
+.stats-advanced { margin-top: 14px; }
+.quota-used { font-size: 11px; color: #888; display: block; flex-basis: 100%; flex-shrink: 0; white-space: nowrap; margin-left: 0; margin-top: 2px; }
+.adv-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 8px 14px; }
+.adv-grid .opt-item { white-space: nowrap; flex-wrap: wrap; }
+.adv-grid .opt-item.wide { grid-column: 1 / -1; }
+.adv-grid .num-input { width: 80px; }
+.adv-grid .opt-item .text-input { flex: 0 0 auto; width: 180px; }
+.adv-actions { display: flex; align-items: center; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
+.adv-actions .scan-hint { margin-left: 4px; }
