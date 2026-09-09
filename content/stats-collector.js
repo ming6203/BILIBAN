@@ -26,6 +26,9 @@
     maxAggregatesMB: 2,      // 大小模式：聚合大小上限 MB
     aggregateStrategy: 1,
     aggregateRetainDays: 90,
+    archiveMergeMB: 5,          // 归档分块阈值（MB）
+    archiveCleanPct: 50,        // 手动清理比例（%）
+    archiveAutoClean: false,    // 自动清理开关
     recordComment: true,     // 记录评论命中
     recordVideo: true,       // 记录视频命中
     recordSubtitle: false,   // 弹幕命中（预留）

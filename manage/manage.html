@@ -78,6 +78,17 @@
         <button id="stats-clear" class="danger-btn">清空数据</button>
         <span class="scan-hint" id="stats-hint"></span>
       </div>
+      <div class="card stats-archive-card">
+        <div class="card-title">📦 归档数据 <span class="title-sub" id="archive-summary"></span></div>
+        <div class="archive-tip">归档随「推送数据到云」自动进行；下载分块可分析过往数据</div>
+        <div class="adv-actions">
+          <button id="archive-refresh" class="secondary-btn">⟳ 刷新云端列表</button>
+          <span class="scan-hint" id="archive-status"></span>
+        </div>
+        <div class="archive-cloud-list" id="archive-cloud-list"></div>
+        <div class="archive-section-title">已下载</div>
+        <div class="archive-download-list" id="archive-download-list"></div>
+      </div>
     </section>
     <!-- ==================== 高级设置 ==================== -->
     <!-- ==================== 高级设置 ==================== -->
@@ -166,6 +177,18 @@
           <button id="gh-token-save" class="primary-btn">验证 Token</button>
           <span class="scan-hint" id="gh-account-status"></span>
         </div>
+      <div class="card stats-advanced">
+        <div class="card-title">📦 归档设置</div>
+        <div class="adv-grid">
+          <label class="opt-item">归档分块阈值（MB）<input type="number" id="adv-archive-merge-mb" class="num-input" min="1" max="100" title="归档分块大小阈值，小于此值合并，达到新建/裂分"></label>
+          <label class="opt-item">手动清理比例（%）<input type="number" id="adv-archive-clean-pct" class="num-input" min="0" max="100" title="清理已归档数据中最旧的 X%；0=不删 100=全清"></label>
+          <label class="opt-item checkbox-item"><input type="checkbox" id="adv-archive-auto-clean"> 自动清理（上传归档后按限制模式保留最新数据，旧数据自动删除）</label>
+        </div>
+        <div class="adv-actions">
+          <button id="adv-archive-clean-btn" class="secondary-btn">清理已归档数据</button>
+          <span class="scan-hint" id="adv-archive-hint"></span>
+        </div>
+      </div>
       </div>
     </section>
     <!-- ==================== 评论扫描 ==================== -->

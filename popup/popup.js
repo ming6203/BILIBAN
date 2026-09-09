@@ -554,6 +554,20 @@ if (otherPush) {
       const ok = results.filter(r => r.ok).length;
       const fail = results.length - ok;
       otherStatusText(otherStatus, '✅ 已推送 ' + ok + '/' + results.length + ' 项数据' + (fail ? '，' + fail + ' 项失败' : ''), fail ? '#ff4d4f' : '#7ecb20');
+      // 归档未归档数据（随推送自动进行）
+      try {
+        const arch = await BilibanBackupSync.archivePendingData();
+        if (arch.archived > 0) {
+          otherStatusText(otherStatus, '✅ 已推送 ' + ok + '/' + results.length + ' 项数据；归档 ' + arch.archived + ' 事件' + (arch.parts.length ? '（' + arch.parts.map(p => p.id).join(', ') + '）' : ''), fail ? '#ff4d4f' : '#7ecb20');
+          // 自动清理（保留策略，跟随限制模式；默认关闭）
+          const clean = await BilibanBackupSync.autoCleanArchived();
+          if (clean.cleaned > 0) {
+            otherStatusText(otherStatus, '✅ 已推送 ' + ok + '/' + results.length + ' 项数据；归档 ' + arch.archived + ' 事件；' + clean.message, fail ? '#ff4d4f' : '#7ecb20');
+          }
+        }
+      } catch (archErr) {
+        otherStatusText(otherStatus, '⚠️ 数据已推送，但归档失败: ' + (archErr.message || archErr), '#ffd700');
+      }
       renderOtherFileList();
     } catch (e) {
       otherStatusText(otherStatus, '❌ 推送失败: ' + (e.message || e), '#ff4d4f');

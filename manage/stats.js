@@ -20,6 +20,9 @@
     maxAggregatesMB: 2,          // 大小模式：聚合大小上限 MB
     aggregateStrategy: 1,
     aggregateRetainDays: 90,
+    archiveMergeMB: 5,          // 归档分块阈值（MB），达到即新建/裂分
+    archiveCleanPct: 50,        // 手动清理比例（%），删最旧 X% 已归档数据
+    archiveAutoClean: false,    // 自动清理开关（上传归档后按限制模式保留策略）
     recordComment: true,
     recordVideo: true,
     recordSubtitle: false,
@@ -41,6 +44,15 @@
     refresh: document.getElementById('stats-refresh'),
     clear: document.getElementById('stats-clear'),
     hint: document.getElementById('stats-hint')
+  };
+
+  // 归档区 DOM
+  const archEl = {
+    refresh: document.getElementById('archive-refresh'),
+    status: document.getElementById('archive-status'),
+    summary: document.getElementById('archive-summary'),
+    cloudList: document.getElementById('archive-cloud-list'),
+    downloadList: document.getElementById('archive-download-list')
   };
 
   let currentStats = null;   // 最近一次 getBlockStats 结果
@@ -258,9 +270,127 @@
     } catch (e) {
       el.hint.textContent = '数据面板渲染失败：' + (e.message || e);
     }
+    // 归档区渲染（云端分块列表 + 下载记录）
+    try { await renderArchiveUI(); } catch (e) { /* 归档区失败不影响主面板 */ }
   }
 
   let currentAdv = DEFAULTS;
+
+  // 日期格式化
+  function fmtDate(ts) {
+    if (!ts) return '';
+    const d = new Date(ts);
+    return (d.getMonth() + 1) + '-' + d.getDate() + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  }
+
+  // 下载归档分块（fetch 带 token → blob → chrome.downloads）
+  async function downloadArchivePart(name) {
+    if (typeof BilibanBackupSync === 'undefined' || typeof BilibanBackupSync.readDataFile !== 'function') {
+      throw new Error('归档模块未加载');
+    }
+    const part = await BilibanBackupSync.readDataFile('archive/' + name);
+    if (!part) throw new Error('分块读取失败');
+    const blob = new Blob([JSON.stringify(part, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    try {
+      const fileName = 'biliban_archive_' + name + '.json';
+      if (typeof chrome.downloads !== 'undefined' && chrome.downloads.download) {
+        await chrome.downloads.download({ url: url, filename: fileName, saveAs: false });
+      } else {
+        // 无 downloads 权限时的降级：a 标签下载
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        a.click();
+      }
+      await BilibanBackupSync.addDownload({
+        id: name + '_' + Date.now(),
+        partName: name,
+        fileName: fileName,
+        downloadedAt: Date.now(),
+        eventCount: (part.meta && part.meta.eventCount) || 0
+      });
+    } finally {
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+    }
+  }
+
+  // 渲染归档区（云端分块列表 + 下载记录）
+  async function renderArchiveUI() {
+    if (!archEl.cloudList) return;
+    try {
+      if (typeof BilibanBackupSync === 'undefined') {
+        archEl.status.textContent = '归档模块未加载';
+        archEl.status.style.color = '#ff4d4f';
+        return;
+      }
+      const parts = await BilibanBackupSync.listArchiveParts();
+      const downloads = await BilibanBackupSync.getDownloads();
+      const downloadedNames = new Set(downloads.map(d => d.partName));
+      archEl.summary.textContent = parts.length ? '（云端 ' + parts.length + ' 个分块）' : '';
+
+      if (parts.length === 0) {
+        archEl.cloudList.innerHTML = '<div class="archive-tip">暂无云端归档分块（推送数据到云后自动生成）</div>';
+      } else {
+        archEl.cloudList.innerHTML = parts.slice().reverse().map(p => {
+          const m = p.meta || {};
+          const tr = m.timeRange ? fmtDate(m.timeRange.from) + ' ~ ' + fmtDate(m.timeRange.to) : '';
+          return '<div class="archive-item">' +
+            '<span class="archive-meta">' + p.name + '</span>' +
+            '<span class="archive-sub">' + (m.eventCount || 0) + ' 事件 · ' + tr + ' · ' + fmtBytes(p.size || 0) + '</span>' +
+            (downloadedNames.has(p.name) ? '<span class="archive-sub">✅ 已下载</span>' : '') +
+            '<button class="secondary-btn-sm archive-dl-btn" data-name="' + p.name + '">下载</button>' +
+            '</div>';
+        }).join('');
+        archEl.cloudList.querySelectorAll('.archive-dl-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            btn.disabled = true;
+            btn.textContent = '下载中...';
+            try {
+              await downloadArchivePart(btn.dataset.name);
+              archEl.status.textContent = '✅ 已下载 ' + btn.dataset.name;
+              archEl.status.style.color = '#7ecb20';
+              await renderArchiveUI();
+            } catch (e) {
+              archEl.status.textContent = '❌ 下载失败: ' + (e.message || e);
+              archEl.status.style.color = '#ff4d4f';
+              btn.disabled = false;
+              btn.textContent = '下载';
+            }
+          });
+        });
+      }
+
+      if (downloads.length === 0) {
+        archEl.downloadList.innerHTML = '<div class="archive-tip">暂无下载记录</div>';
+      } else {
+        archEl.downloadList.innerHTML = downloads.slice().reverse().map(d =>
+          '<div class="archive-item">' +
+          '<span class="archive-meta">' + d.fileName + '</span>' +
+          '<span class="archive-sub">' + fmtDate(d.downloadedAt) + ' 下载 · ' + (d.eventCount || 0) + ' 事件</span>' +
+          '<button class="danger-btn-sm archive-del-btn" data-id="' + d.id + '">删除记录</button>' +
+          '</div>'
+        ).join('');
+        archEl.downloadList.querySelectorAll('.archive-del-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            try {
+              await BilibanBackupSync.removeDownload(btn.dataset.id);
+              await renderArchiveUI();
+            } catch (e) {
+              archEl.status.textContent = '❌ 删除失败: ' + (e.message || e);
+              archEl.status.style.color = '#ff4d4f';
+            }
+          });
+        });
+      }
+      archEl.status.textContent = '';
+    } catch (e) {
+      archEl.status.textContent = '❌ ' + (e.message || e);
+      archEl.status.style.color = '#ff4d4f';
+    }
+  }
+
+  if (archEl.refresh) archEl.refresh.addEventListener('click', renderArchiveUI);
 
   // ---------- 事件 ----------
   if (el.refresh) el.refresh.addEventListener('click', render);
@@ -310,7 +440,12 @@
     saveData: document.getElementById('adv-save-data'),
     hintData: document.getElementById('adv-hint-data'),
     saveAgg: document.getElementById('adv-save-agg'),
-    hintAgg: document.getElementById('adv-hint-agg')
+    hintAgg: document.getElementById('adv-hint-agg'),
+    archiveMergeMB: document.getElementById('adv-archive-merge-mb'),
+    archiveCleanPct: document.getElementById('adv-archive-clean-pct'),
+    archiveAutoClean: document.getElementById('adv-archive-auto-clean'),
+    archiveCleanBtn: document.getElementById('adv-archive-clean-btn'),
+    archiveHint: document.getElementById('adv-archive-hint')
   };
 
   // 限制模式联动：切换时显示对应输入框与已用统计
@@ -364,6 +499,9 @@
     if (advEl.maxAggMB) advEl.maxAggMB.value = cfg.maxAggregatesMB != null ? cfg.maxAggregatesMB : DEFAULTS.maxAggregatesMB;
     advEl.aggStrategy.value = cfg.aggregateStrategy;
     advEl.aggRetain.value = cfg.aggregateRetainDays;
+    if (advEl.archiveMergeMB) advEl.archiveMergeMB.value = cfg.archiveMergeMB != null ? cfg.archiveMergeMB : DEFAULTS.archiveMergeMB;
+    if (advEl.archiveCleanPct) advEl.archiveCleanPct.value = cfg.archiveCleanPct != null ? cfg.archiveCleanPct : DEFAULTS.archiveCleanPct;
+    if (advEl.archiveAutoClean) advEl.archiveAutoClean.checked = !!cfg.archiveAutoClean;
     advEl.recordComment.checked = !!cfg.recordComment;
     advEl.recordVideo.checked = !!cfg.recordVideo;
     syncLimitModeUI();
@@ -385,6 +523,9 @@
       maxAggregatesMB: advEl.maxAggMB ? clampInt(advEl.maxAggMB.value, 0, 20, DEFAULTS.maxAggregatesMB) : DEFAULTS.maxAggregatesMB,
       aggregateStrategy: Number(advEl.aggStrategy.value) || 1,
       aggregateRetainDays: clampInt(advEl.aggRetain.value, 0, 3650, DEFAULTS.aggregateRetainDays),
+      archiveMergeMB: advEl.archiveMergeMB ? clampInt(advEl.archiveMergeMB.value, 1, 100, DEFAULTS.archiveMergeMB) : DEFAULTS.archiveMergeMB,
+      archiveCleanPct: advEl.archiveCleanPct ? clampInt(advEl.archiveCleanPct.value, 0, 100, DEFAULTS.archiveCleanPct) : DEFAULTS.archiveCleanPct,
+      archiveAutoClean: advEl.archiveAutoClean ? advEl.archiveAutoClean.checked : DEFAULTS.archiveAutoClean,
       recordComment: advEl.recordComment.checked,
       recordVideo: advEl.recordVideo.checked,
       recordSubtitle: DEFAULTS.recordSubtitle,
@@ -442,6 +583,26 @@
   }
   if (advEl.eventLimitMode) advEl.eventLimitMode.addEventListener('change', syncLimitModeUI);
   if (advEl.aggLimitMode) advEl.aggLimitMode.addEventListener('change', syncLimitModeUI);
+
+  // 手动清理已归档数据（按比例删最旧，0=不删 100=全清）
+  if (advEl.archiveCleanBtn) {
+    advEl.archiveCleanBtn.addEventListener('click', async () => {
+      const pct = advEl.archiveCleanPct ? clampInt(advEl.archiveCleanPct.value, 0, 100, DEFAULTS.archiveCleanPct) : DEFAULTS.archiveCleanPct;
+      if (pct <= 0) { advEl.archiveHint.textContent = '清理比例需 > 0'; advEl.archiveHint.style.color = '#ffd700'; return; }
+      if (!confirm('确定清理已归档数据中最旧的 ' + pct + '% 吗？\n仅删除本地已归档的旧数据（云端分块副本保留），未归档数据与曲线数据不受影响。')) return;
+      if (typeof BilibanBackupSync === 'undefined' || typeof BilibanBackupSync.manualCleanArchived !== 'function') {
+        advEl.archiveHint.textContent = '归档模块未加载'; advEl.archiveHint.style.color = '#ff4d4f'; return;
+      }
+      try {
+        const r = await BilibanBackupSync.manualCleanArchived(pct);
+        advEl.archiveHint.textContent = '✅ ' + (r.message || ('清理 ' + (r.cleaned || 0) + ' 条'));
+        advEl.archiveHint.style.color = '#7ecb20';
+      } catch (e) {
+        advEl.archiveHint.textContent = '❌ 清理失败: ' + (e.message || e);
+        advEl.archiveHint.style.color = '#ff4d4f';
+      }
+    });
+  }
 
   // ---------- 备份仓库设置 ----------
   const bkEl = {

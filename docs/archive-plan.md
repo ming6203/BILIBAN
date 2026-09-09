@@ -1,174 +1,199 @@
-# BILIBAN · 数据归档（Archive）功能 技术方案
+# BILIBAN · 数据归档（Archive）功能 技术方案 v4（终稿）
 
 > 状态：**待审核**（审核通过后按里程碑实施）
-> 目标：全量明细/聚合表备份到 GitHub 后**归档（不计配额）**，打标记可回顾，支持下载过往数据分析，可在数据面板管理（下载/删除）。
+> v4 变更：新增**自动清理**（上传后保留策略，跟随限制模式，默认关）；清理逻辑明确为**从旧到新（FIFO）**。
 
 ---
 
-## 一、需求拆解
+## 一、需求拆解（v3 确认版）
 
-| 需求 | 说明 |
+| 需求 | 决策 |
 |---|---|
-| 归档不计配额 | 全量 `events[]` + `aggregates{}` 上传 GitHub 后**从本地清除**，释放 `biliban_block_events` 配额占用 |
-| 打标记便于回顾 | 每个归档数据集带 `meta.json`（id/时间/事件数/时间范围/大小等），数据面板列表展示 |
-| 下载过往数据 | 数据面板列出云端归档数据集，可下载 `events.json`/`aggregates.json` 到本地做分析 |
-| 下载管理 | 数据面板显示「可下载」（云端）与「下载完成」（本地记录），可删除下载记录 |
-| 内容不重复 | 归档 = **迁移**（上传当前全部 → 本地清空），两次归档天然无重叠 |
-| 衔接旧数据 | 本地是唯一数据源；归档 2 只含归档 1 之后的新数据，时间连续无遗漏 |
+| 归档与上传绑定 | ✅ 随「推送数据到云」自动进行（无单独按钮） |
+| 分块合并防碎片 | ✅ 活跃分块 < 阈值 → 合并覆盖；≥ 阈值 → 新建分块 |
+| 归档阈值可配 | ✅ 高级设置 `archiveMergeMB`，默认 **5 MB** |
+| 超大单次归档 | ✅ 自动按阈值**裂分为多个分块**（不提示手动） |
+| 本地不清空 | ✅ 归档后 events 保留本地（数据面板照常可用） |
+| 手动清理 | ✅ 高级设置页，按**清理百分比**清理**一部分或全部**已归档旧数据，保证可用性 |
+| 聚合表 | ✅ 归档时全量快照进分块 + 本地立即清空（对数据面板无影响，见 §二.决策 5） |
+| 下载/删除 | ✅ 数据面板列出云端分块可下载；删除下载的本地归档 |
+| 不重复+完整衔接 | ✅ 本地 cursor 边界 + 聚合快照语义 |
 
 ---
 
 ## 二、核心设计决策
 
-### 决策 1：归档 = 迁移，不是复制（这是"不重复+完整衔接"的关键）
+### 决策 1：两步分离——归档 ≠ 清理
 
 ```
-归档前本地:  events[E1..En]  aggregates{A}  buckets{历史}
-   │ ① 上传全部 events + aggregates + 生成 meta → GitHub data/archive/<id>/
-   │ ② 全部上传成功 → 本地 events=[]、aggregates={}（释放配额）
-   │    buckets/videoBuckets/commentBuckets 保留（历史曲线不丢，一年 365 条极小）
-   ▼
-归档后本地:  events[]  aggregates{}  buckets{历史不变}
-下次采集 → 新事件 E(n+1).. → 再次归档上传的只有新数据 → 无重叠、时间连续
+归档（自动，随推送）：未归档数据 → 上传 GitHub 分块 → 更新 cursor
+清理（手动，高级设置）：按百分比清理已归档旧数据 → 释放配额
 ```
 
-- **为什么不需要游标**：本地只保留"未归档"的数据，归档即清空。二次归档上传的内容天然是"上次归档之后"的数据，**不可能重复，也不可能遗漏**（pending 缓冲里未刷盘的少量事件仍留本地，下次归档自然带上）。
-- **失败安全**：② 的本地清空**只在全部文件上传成功且 meta 写入后**执行。中途失败 → 本地数据原样保留 → 重试（PUT 覆盖同文件，幂等）→ 不会产生重复文件。
+### 决策 2：归档边界 = 本地 cursor
 
-### 决策 2：数据集幂等 = "文件级 PUT 覆盖 + 数据集 id 唯一"
+```json
+// biliban_archive_cursor
+{ "lastEventId": "ev_xxx", "lastTimestamp": 1700100000000, "updatedAt": 1700100000000 }
+```
+未归档 = `timestamp > cursor.lastTimestamp`；归档成功后才更新 cursor。
 
-- 数据集 id：`archive_<YYYYMMDD_HHmmss>`（时间戳唯一，不会重复生成）
-- 上传单个文件总是 PUT（存在即覆盖）：重试/续传安全
-- 数据集级防重复：上传前 GET `meta.json`，已存在则提示"该数据集已存在"并跳过（防御性，正常流程不会触发）
-
-### 决策 3：归档数据集的 GitHub 目录结构
+### 决策 3：分块结构（自包含单文件）
 
 ```
 data/archive/
-  ├── archive_20260909_153000/
-  │     ├── meta.json          ← 标记（回顾用）
-  │     ├── events.json        ← 全量事件明细（>8MB 原始自动分块 events_0001.json...）
-  │     └── aggregates.json    ← 聚合表快照
-  └── archive_20260910_102030/
-        └── ...
+  ├── part_001.json   { meta, events[], aggregates{} }
+  ├── part_002.json
+  └── part_003.json   ← 活跃分块
 ```
 
-### 决策 4：meta.json 标记 schema（回顾/列表的数据源）
-
+**meta schema**：
 ```json
 {
-  "id": "archive_20260909_153000",
-  "version": 1,
+  "id": "part_003",
+  "version": 2,
   "createdAt": 1700000000000,
+  "lastMergedAt": 1700100000000,
   "timeRange": { "from": 1700000000000, "to": 1700100000000 },
   "eventCount": 5230,
   "videoCount": 120,
   "commentCount": 5110,
   "aggCount": 800,
-  "sizeBytes": 1234567,
-  "chunkCount": 1,
-  "source": "manual"
+  "sizeBytes": 1234567
 }
 ```
 
-### 决策 5：本地存储键
+### 决策 4：归档流程（合并 + 裂分）
 
-| 键 | 内容 |
-|---|---|
-| `biliban_archive_index` | 已归档数据集索引：`[{ id, uploadedAt, eventCount, aggCount, timeRange, sizeBytes }]`（本地回顾缓存） |
-| `biliban_archive_downloads` | 下载记录：`[{ id, fileName, downloadedAt, sizeBytes }]` |
+```
+pushAllData() 推送 5 数据文件后
+  ├─ 1. 未归档 = timestamp > cursor.lastTimestamp（无则跳过）
+  ├─ 2. 读活跃分块 part_00N（无则从 0 开始）
+  ├─ 3. 容量规划：
+  │     ├─ 活跃分块 size < 阈值 → 先填满它（旧数据+新数据合并）
+  │     └─ 剩余新数据 → 按阈值切块：新建 part_00(N+1)...（每块 ≈ 阈值）
+  │        （本次新增超大时自动裂分为多个 part，无需手动干预）
+  ├─ 4. 每块组装 { meta(更新), events, aggregates(全量快照) }
+  ├─ 5. 逐个 PUT 上传（拿 sha 覆盖 / 新建）
+  ├─ 6. 全部成功 → 更新 cursor；本地 aggregates 清空
+  └─ 7. 提示「归档：新增 N 事件，分块 part_00X 更新 / part_00Y 新建」
+```
+
+**裂分示例**（阈值 5MB）：本次未归档 12MB → 活跃分块还有 2MB 空间 → 合并 2MB 进活跃分块 → 剩余 10MB 裂成 part_00(N+1)(5MB) + part_00(N+2)(5MB)。
+
+### 决策 5：聚合表影响说明（重要）
+
+**聚合表 `aggregates{}` 的用途与影响**：
+
+| 数据面板组件 | 数据源 | 聚合表清空后 |
+|---|---|---|
+| 概览卡 / 折线图 / 已记录 | `events[]` + `buckets` | ✅ 不受影响 |
+| 聚合表（预留：按用户/视频维度统计） | `aggregates{}` | ⚠️ 清空重新累计 |
+
+- **当前数据面板完全不依赖聚合表**（折线图用按天 buckets，概览用 events）
+- 清空影响面 = 失去本地"按用户/视频维度"的历史累计统计（将来做排行/分析用）
+- **历史在云端有副本**：每个归档分块含聚合表快照，下载分块可分析
+- 清空后本地从零重新累计，新数据正常
+
+### 决策 6：清理机制（手动百分比 + 自动保留策略）
+
+**两种清理并存，触发时机不同**：
+
+| 清理方式 | 触发 | 规则 | 默认 |
+|---|---|---|---|
+| **手动清理** | 高级设置按钮 | 按 `archiveCleanPct` 删最旧 X% 已归档数据（0=不删 100=全清） | 按钮触发 |
+| **自动清理** | **上传归档成功后**自动执行 | 按**限制模式保留策略**删旧至阈值内 | `archiveAutoClean: false`（默认关） |
+
+**共同原则：从旧到新清理（FIFO）**——10 天数据每天量差不多，清 50% = 删最旧 5 天（10 天前~5 天前），保留最近 5 天。
+
+#### 自动清理（保留策略）
+
+```
+归档上传成功、cursor 更新后
+  ├─ 若 archiveAutoClean 关闭 → 跳过
+  ├─ 阈值 = 跟随限制模式（复用现有配额，无需独立设置）：
+  │     ├─ 数量形式 → 保留最新 maxEvents 条（如 50000）
+  │     └─ 大小形式 → 保留最新 maxEventsMB 大小（如 8MB）
+  ├─ 本地 events 未超阈值 → 不清理（数据没达到设定阈值不动）
+  ├─ 超阈值 → 从最旧事件开始删，直到 ≤ 阈值
+  └─ 配额 = 0（不限制）→ 不清理
+```
+
+- **阈值复用配额**：数量形式用 `maxEvents`、大小形式用 `maxEventsMB`——"保留多少"与"上限多少"同一数值，语义一致
+- **触发时机安全**：仅在归档上传成功后触发（数据已有云端副本），删旧无风险
+- **可用性保证**：未归档数据（刚归档完量极小）与 buckets 曲线永不清理；清理只动最旧已归档部分
+
+#### 手动清理（百分比）
+
+```
+高级设置 → [清理已归档数据]（显示当前 archiveCleanPct）
+  ├─ 确认弹窗（说明影响面）
+  └─ 删已归档数据中最旧的 X%（按条数），未归档与 buckets 保留
+```
+
+### 决策 7：配额联动
+
+- 清理后：本地 events 减少 → 数据面板"已记录"显示**未归档数量 / 配额**
+- 已归档部分（本地保留）不计入"未归档"显示
 
 ---
 
-## 三、核心流程
+## 三、其余流程（下载/删除/回顾）
 
-### 3.1 归档并上传（手动，数据面板按钮）
-
-```
-点击「归档并上传当前数据」
-  ├─ 1. 读本地 biliban_block_events（events + aggregates + buckets）
-  ├─ 2. 无数据（events 空且 aggregates 空）→ 提示"没有可归档的数据"
-  ├─ 3. 生成 id = archive_<YYYYMMDD_HHmmss>
-  ├─ 4. 组装 meta（时间范围取 events 首尾 timestamp、计数、估算字节）
-  ├─ 5. 上传（复用 backup-sync 基础设施，走数据仓库）：
-  │     ├─ data/archive/<id>/meta.json      (PUT)
-  │     ├─ data/archive/<id>/events.json     (PUT；超大自动分块 events_0001.json...)
-  │     └─ data/archive/<id>/aggregates.json (PUT)
-  │     └─ 每文件先 _getDataFileInfo 拿 sha → 覆盖更新
-  ├─ 6. 全部成功 → 清空本地 events/aggregates（保留 buckets）→ 写 biliban_archive_index
-  └─ 7. 提示「已归档 N 事件 / M 聚合键，配额已释放」
-```
-
-### 3.2 云端列表（可下载）
+### 3.1 云端分块列表（数据面板）
 
 ```
-刷新 → listArchiveRepos(仓库) → 列 data/archive/ 子目录（contents API type:'dir'）
-  → 逐个读 <id>/meta.json → 汇总列表（id/时间范围/事件数/大小）
-  → 与 biliban_archive_downloads 比对 → 标出"已下载"
+刷新 → listArchiveParts() → 列 data/archive/part_*.json → 读 meta 摘要
+  → 与 biliban_archive_downloads 比对标"已下载"
 ```
 
-### 3.3 下载（分析用）
+### 3.2 下载
 
 ```
-点击「下载」
-  ├─ fetch（带 token，私有仓库可用）拉 events.json（含分块合并）
-  ├─ URL.createObjectURL(blob) → chrome.downloads.download({ url, filename: 'biliban_archive_<id>_events.json' })
-  └─ 成功后写 biliban_archive_downloads 记录
+点击「下载」→ fetch 带 token 拉 part_00N.json → objectURL → chrome.downloads.download
+  → 写 biliban_archive_downloads 记录
 ```
 
-> **为什么不用 raw URL 直连**：`chrome.downloads` 无法附加 Authorization header，私有仓库 raw 会 404；fetch 带 token 取 blob → objectURL 下载可同时支持私有/公共仓库，且 token 不暴露在下载请求里。
-
-### 3.4 下载管理（删除）
+### 3.3 删除下载的本地归档
 
 ```
-「下载完成」列表每项 → [删除记录] → 从 biliban_archive_downloads 移除
+「已下载」列表每项 → [删除] → 删本地下载记录（文件在系统下载目录，提示手动删）
 ```
-> 说明：扩展无法删除用户下载目录里的文件，删除的是**下载记录**（文件保留在用户下载目录，便于分析留存）；如需连文件一起删，提示用户手动删。
 
-### 3.5 回顾
+### 3.4 回顾
 
-- 数据面板「归档数据」区：按时间倒序列出全部归档数据集（meta 摘要：时间范围/事件数/大小）
-- 本地 `biliban_archive_index` 缓存最近列表（离线也能看），云端列表为准
+按分块 id 倒序展示 meta 摘要；分析时下载全部分块按 timeRange 合并。
 
 ---
 
-## 四、边界与容错
+## 四、高级设置新增字段
+
+| 字段 | 默认 | 说明 |
+|---|---|---|
+| `archiveMergeMB` | 5 | 归档分块阈值（MB），达到即新建分块/裂分 |
+| `archiveCleanPct` | 50 | 手动清理比例（%），删最旧 X% 已归档数据；0=不删 100=全清 |
+| `archiveAutoClean` | **false** | 自动清理开关：上传归档后按限制模式保留策略删旧（阈值复用配额） |
+
+存储：并入 `biliban_advanced_settings`。
+
+---
+
+## 五、manifest 变更
+
+- 新增权限：`"downloads"`
+
+---
+
+## 六、边界与容错
 
 | 场景 | 处理 |
 |---|---|
-| 上传中途失败（网络/API） | 本地数据**不清空**，提示重试；重试 PUT 覆盖同文件，幂等 |
-| 数据集已存在（meta GET 命中） | 跳过并提示，不重复上传 |
-| events 超大（>8MB 原始） | 自动分块 `events_0001.json...`，meta 记 `chunkCount`，下载时合并 |
-| 配额联动 | 归档后本地 events/aggregates 清空 → 数据面板"已记录"归零、配额释放 |
-| 归档时缓冲未刷盘 | pending 中的少量事件仍留本地，下次归档自然带上（无丢失，仅延迟） |
-| 下载失败 | 不写下载记录，提示重试 |
-| 仓库不存在/无 data/archive/ | 列表为空并提示（不会报错） |
-| 删除下载记录 | 仅删记录，文件保留（用户可手动清理） |
-
----
-
-## 五、UI 设计（数据面板第三个区块「归档数据」）
-
-```
-┌─ 📦 归档数据 ─────────────────────────────┐
-│ [归档并上传当前数据] [刷新云端列表]           │
-│                                           │
-│ 云端归档（可下载）  [点按 meta 摘要排序展示]    │
-│   archive_20260909_153000                │
-│   5000 事件 · 2026-09-01 ~ 2026-09-09 · 1.2 MB  [下载] │
-│   ...                                    │
-│ 已下载（下载完成）                          │
-│   biliban_archive_20260909_153000_events.json  │
-│   2026-09-10 14:30 下载 · 1.2 MB  [删除记录]    │
-└──────────────────────────────────────────┘
-```
-
----
-
-## 六、manifest 变更
-
-- 新增权限：`"downloads"`（chrome.downloads API 下载归档文件）
-- 无需新增 host_permissions（复用现有 github.com API 访问）
+| 上传中途失败 | 旧分块不变（PUT 原子），cursor 不更新，重试幂等 |
+| 合并时旧分块下载失败 | 不合并不裂分，提示重试 |
+| 无未归档数据 | 跳过归档，仅提示 |
+| 清理后新数据 | 未归档数据不受影响，下次归档正常 |
+| 归档后未清理 | 数据保留本地，配额仍占，可随时高级设置清理 |
+| 仓库无 data/archive/ | 列表为空不报错 |
 
 ---
 
@@ -176,18 +201,14 @@ data/archive/
 
 | 里程碑 | 内容 | 验证 |
 |---|---|---|
-| M10 | `lib/backup-sync.js` 归档核心：`uploadArchive()`（组装 meta/上传/分块/幂等）、`listArchives()`、`readArchiveEvents()` | 模拟上传成功→本地清空；失败→保留；重试幂等 |
-| M11 | 数据面板归档 UI：归档按钮/云端列表/下载记录/删除记录 | HTML 元素 + 事件绑定断言 |
-| M12 | `chrome.downloads` 下载（fetch blob → objectURL）+ manifest downloads 权限 | manifest 权限 + 下载调用路径 |
-| M13 | 全链路验证：归档→列表→下载→删除；配额释放；衔接连续性（两次归档无重叠） | hermes-verify- 临时脚本 + 实机 |
-
-依赖：M10 依赖现有 backup-sync（M6-M9 已交付）；M11/M12 依赖 M10；M13 收尾。
+| M10 | backup-sync.js 归档核心：cursor、`archivePendingData()`（合并/裂分/快照/上传/幂等）、`listArchiveParts()`、高级设置 `archiveMergeMB` 读取 | ✅ 已完成 |
+| M11 | 高级设置清理：`archiveCleanPct`/`archiveAutoClean` 设置 + 手动清理按钮 + 上传后自动清理（跟随限制模式保留策略） | ✅ 已完成 |
+| M12 | 数据面板归档 UI：云端列表/下载/下载记录/删除 + manifest downloads | ✅ 已完成 |
+| M13 | 全链路验证 | ✅ 已完成 |
 
 ---
 
-## 八、待确认问题（审核时请拍板）
+## 八、残留小确认（不影响实施）
 
-1. **归档触发**：仅手动按钮？还是高级设置加「配额达 X% 自动归档」开关（默认关）？
-2. **下载粒度**：每个数据集一个「下载」按钮下载 events.json（+aggregates 另按钮），还是打包成一个文件？
-3. **删除下载记录**：只删记录（文件留在下载目录）可以吗？还是需要尝试清理文件？
-4. **聚合表归档后本地重置为空**（新命中重新累计）——确认可接受？还是希望聚合表只归档"增量"（保留本地累计）？
+1. 清理比例默认 **50%** 可接受？（还是 100% 默认）
+2. 清理按钮文案用「清理已归档数据」+ 比例提示，OK？
