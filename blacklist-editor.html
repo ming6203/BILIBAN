@@ -1,0 +1,2002 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BILIBAN 黑名单维护</title>
+<script>
+  // 在 CSS 应用前确定主题，避免刷新时闪白/闪黑
+  try {
+    var savedTheme = localStorage.getItem('biliban-editor:theme');
+    var initialTheme = (savedTheme === 'dark' || savedTheme === 'light')
+      ? savedTheme
+      : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    document.documentElement.dataset.theme = initialTheme;
+  } catch (e) { /* 隐私模式下忽略 */ }
+</script>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --bg-decor: #fdf1f5;
+    --panel: #ffffff;
+    --panel-2: #f7f8fa;
+    --border: #e4e6eb;
+    --border-strong: #d3d7de;
+    --text: #1f2328;
+    --muted: #667085;
+    --accent: #fb7299;
+    --accent-strong: #e6608a;
+    --accent-soft: #fff0f5;
+    --accent-text: #c93664;
+    --danger: #d1242f;
+    --danger-soft: #ffebe9;
+    --ok: #1a7f37;
+    --ok-soft: #dafbe1;
+    --info: #0969da;
+    --info-soft: #ddf4ff;
+    --warn: #8a6100;
+    --warn-soft: #fff8c5;
+    --shadow: 0 8px 28px rgba(23, 28, 38, .07);
+    --shadow-sm: 0 2px 8px rgba(23, 28, 38, .06);
+    --radius: 14px;
+    --radius-sm: 9px;
+    color-scheme: light;
+  }
+  [data-theme="dark"] {
+    --bg: #17171a;
+    --bg-decor: #24191f;
+    --panel: #222226;
+    --panel-2: #2a2a2f;
+    --border: #3a3a41;
+    --border-strong: #4a4a53;
+    --text: #ececf1;
+    --muted: #a2a2ad;
+    --accent: #fb7299;
+    --accent-strong: #ff8fb0;
+    --accent-soft: rgba(251, 114, 153, .14);
+    --accent-text: #ff9dbb;
+    --danger: #ff7b72;
+    --danger-soft: rgba(248, 81, 73, .14);
+    --ok: #3fb950;
+    --ok-soft: rgba(46, 160, 67, .15);
+    --info: #79c0ff;
+    --info-soft: rgba(56, 139, 253, .14);
+    --warn: #e3b341;
+    --warn-soft: rgba(187, 128, 9, .16);
+    --shadow: 0 12px 32px rgba(0, 0, 0, .28);
+    --shadow-sm: 0 2px 10px rgba(0, 0, 0, .22);
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { min-height: 100%; }
+  body {
+    margin: 0;
+    font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+    color: var(--text);
+    background:
+      radial-gradient(1100px 500px at 12% -10%, var(--bg-decor), transparent 65%),
+      var(--bg);
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent-text); }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: .92em;
+    padding: 1px 5px;
+    border-radius: 5px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+  }
+  button, input { font: inherit; }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* 顶部 */
+  .app-header {
+    background: linear-gradient(120deg, #fb7299, #f45b88 70%, #ef4f80);
+    color: #fff;
+    box-shadow: 0 2px 14px rgba(232, 76, 126, .28);
+  }
+  .header-inner {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 16px 22px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .brand-icon {
+    width: 42px; height: 42px;
+    display: grid; place-items: center;
+    border-radius: 12px;
+    background: rgba(255,255,255,.18);
+    font-size: 22px;
+    flex: 0 0 auto;
+  }
+  .brand h1 { margin: 0; font-size: 18px; line-height: 1.3; letter-spacing: .2px; }
+  .brand p { margin: 2px 0 0; font-size: 12px; color: rgba(255,255,255,.8); }
+  .theme-btn {
+    width: 38px; height: 38px;
+    border: 1px solid rgba(255,255,255,.35);
+    border-radius: 10px;
+    background: rgba(255,255,255,.12);
+    color: #fff;
+    font-size: 17px;
+    cursor: pointer;
+    display: grid; place-items: center;
+    transition: background .18s, transform .18s;
+    flex: 0 0 auto;
+  }
+  .theme-btn:hover { background: rgba(255,255,255,.24); transform: translateY(-1px); }
+
+  main {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 22px 22px 72px;
+  }
+
+  /* 卡片与表单 */
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 18px;
+  }
+  .eyebrow {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 2px;
+  }
+  h2 { margin: 0; font-size: 16px; line-height: 1.35; }
+  .hint { font-size: 12px; color: var(--muted); }
+  .meta { font-size: 12px; color: var(--muted); word-break: break-all; }
+
+  .field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  .field > label { font-size: 12px; font-weight: 600; color: var(--muted); }
+  input[type="text"], input[type="password"], input[type="search"] {
+    width: 100%;
+    height: 38px;
+    padding: 0 11px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--panel-2);
+    color: var(--text);
+    transition: border-color .18s, box-shadow .18s, background .18s;
+  }
+  input::placeholder { color: var(--muted); opacity: .8; }
+  input:focus {
+    outline: none;
+    border-color: var(--accent);
+    background: var(--panel);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  input:disabled { opacity: .62; cursor: not-allowed; }
+  .input-with-btn { display: flex; gap: 8px; }
+  .input-with-btn input { flex: 1; min-width: 0; }
+  .input-with-btn button {
+    width: 38px; height: 38px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--panel-2);
+    color: var(--text);
+    cursor: pointer;
+    flex: 0 0 auto;
+  }
+  .input-with-btn button:hover { border-color: var(--accent); color: var(--accent-text); }
+
+  .btn {
+    height: 38px;
+    padding: 0 16px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    background: var(--panel-2);
+    color: var(--text);
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background .18s, border-color .18s, color .18s, transform .18s, opacity .18s;
+  }
+  .btn:hover { transform: translateY(-1px); }
+  .btn:active { transform: translateY(0); }
+  .btn:disabled { opacity: .48; cursor: not-allowed; transform: none; }
+  .btn.primary { background: var(--accent); color: #fff; }
+  .btn.primary:hover { background: var(--accent-strong); }
+  .btn.ghost { background: transparent; border-color: var(--border); color: var(--text); }
+  .btn.ghost:hover { border-color: var(--accent); color: var(--accent-text); background: var(--accent-soft); }
+  .btn.soft { background: var(--accent-soft); color: var(--accent-text); border-color: transparent; }
+  .btn.soft:hover { background: var(--accent); color: #fff; }
+  .btn.danger-ghost { background: transparent; border-color: var(--border); color: var(--danger); }
+  .btn.danger-ghost:hover { background: var(--danger-soft); border-color: var(--danger); }
+  .btn.danger { background: var(--danger); color: #fff; }
+  .btn.small { height: 32px; padding: 0 12px; font-size: 12px; }
+
+  .connect-card { margin-bottom: 18px; }
+  .connect-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.6fr) minmax(160px, .7fr);
+    gap: 14px;
+  }
+  .repo-field { grid-column: 1; }
+  .token-field { grid-column: 2; }
+  .connect-grid > .field:nth-child(2) { grid-column: 2; grid-row: 1; }
+  .connect-grid > .field:nth-child(3) { grid-column: 1 / -1; }
+  .connect-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 15px;
+  }
+  .security-note {
+    margin: 14px 0 0;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--panel-2);
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .security-note strong { color: var(--text); }
+
+  /* 状态提示 */
+  .status {
+    margin-top: 13px;
+    padding: 9px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    word-break: break-word;
+  }
+  .status.info { color: var(--info); background: var(--info-soft); border-color: var(--info); }
+  .status.ok { color: var(--ok); background: var(--ok-soft); border-color: var(--ok); }
+  .status.err { color: var(--danger); background: var(--danger-soft); border-color: var(--danger); }
+  .status.warn { color: var(--warn); background: var(--warn-soft); border-color: var(--warn); }
+  .status a { color: inherit; font-weight: 700; }
+
+  /* 文件识别条 */
+  .source-card { margin-bottom: 16px; }
+  .source-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  .source-title { font-size: 15px; font-weight: 700; word-break: break-all; }
+  .source-sub { margin-top: 3px; font-size: 12px; color: var(--muted); }
+  .file-tabs {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 12px 2px 2px;
+    margin-top: 6px;
+    scrollbar-width: thin;
+  }
+  .file-tab {
+    flex: 0 0 auto;
+    min-width: 150px;
+    max-width: 260px;
+    text-align: left;
+    padding: 9px 11px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--panel-2);
+    color: var(--text);
+    cursor: pointer;
+    transition: border-color .18s, background .18s, box-shadow .18s;
+  }
+  .file-tab:hover { border-color: var(--accent); }
+  .file-tab.active {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    box-shadow: 0 0 0 1px var(--accent) inset;
+  }
+  .file-tab-top { display: flex; align-items: center; gap: 7px; }
+  .file-tab-name {
+    font-weight: 700;
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+  .file-tab-meta {
+    margin-top: 3px;
+    font-size: 11px;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .kind {
+    flex: 0 0 auto;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 700;
+  }
+  .dirty-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+    flex: 0 0 auto;
+  }
+
+  /* 主体布局 */
+  .layout {
+    display: grid;
+    grid-template-columns: 292px minmax(0, 1fr);
+    gap: 16px;
+    align-items: start;
+  }
+  .panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .groups-card { position: sticky; top: 16px; }
+  .group-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-height: min(58vh, 620px);
+    overflow: auto;
+    scrollbar-width: thin;
+  }
+  .group-list li + li { margin-top: 3px; }
+  .group-item {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 9px;
+    border: 1px solid transparent;
+    border-radius: 9px;
+    background: transparent;
+    color: var(--text);
+    text-align: left;
+    cursor: pointer;
+  }
+  .group-item:hover { background: var(--panel-2); }
+  .group-item.active { background: var(--accent-soft); border-color: var(--accent); }
+  .group-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .group-item.off .group-name { color: var(--muted); }
+  .group-count {
+    flex: 0 0 auto;
+    min-width: 22px;
+    text-align: right;
+    font-size: 11px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .status-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--ok);
+    flex: 0 0 auto;
+  }
+  .group-item.off .status-dot { background: var(--muted); opacity: .55; }
+  .file-meta {
+    margin-top: 12px;
+    padding-top: 11px;
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--muted);
+    word-break: break-all;
+    line-height: 1.55;
+  }
+
+  /* 详情 */
+  .detail-card { min-height: 420px; }
+  .detail-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .detail-title { min-width: 0; }
+  .detail-title h2 { font-size: 19px; word-break: break-word; }
+  .detail-actions { display: flex; gap: 7px; flex-wrap: wrap; }
+  .badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 7px; }
+  .badge {
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--panel-2);
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .badge.on { color: var(--ok); border-color: var(--ok); background: var(--ok-soft); }
+  .badge.off { color: var(--danger); border-color: var(--danger); background: var(--danger-soft); }
+  .enable-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 16px;
+    padding: 11px 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--panel-2);
+  }
+  .enable-title { font-size: 13px; font-weight: 700; }
+  .switch { position: relative; width: 42px; height: 24px; flex: 0 0 auto; cursor: pointer; }
+  .switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+  .slider {
+    position: absolute;
+    inset: 0;
+    border-radius: 999px;
+    background: var(--border-strong);
+    transition: background .2s;
+  }
+  .slider::before {
+    content: "";
+    position: absolute;
+    width: 18px; height: 18px;
+    left: 3px; top: 3px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 3px rgba(0,0,0,.25);
+    transition: transform .2s;
+  }
+  .switch input:checked + .slider { background: var(--accent); }
+  .switch input:checked + .slider::before { transform: translateX(18px); }
+  .switch input:focus-visible + .slider { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .add-uid-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 16px;
+    flex-wrap: wrap;
+  }
+  .add-uid-row .grow { flex: 1; min-width: 200px; }
+
+  .uid-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 18px;
+    flex-wrap: wrap;
+  }
+  .uid-toolbar-label { font-size: 13px; font-weight: 700; }
+  .uid-toolbar-label .hint { font-weight: 400; margin-left: 4px; }
+  .uid-toolbar input { width: 180px; height: 34px; }
+
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-content: flex-start;
+    min-height: 92px;
+    max-height: min(46vh, 470px);
+    overflow: auto;
+    margin-top: 10px;
+    padding: 11px;
+    border: 1px dashed var(--border-strong);
+    border-radius: 10px;
+    background: var(--panel-2);
+    scrollbar-width: thin;
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 29px;
+    padding: 0 5px 0 9px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--panel);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    box-shadow: var(--shadow-sm);
+  }
+  .chip-uid { line-height: 1; }
+  .chip-btn {
+    width: 21px; height: 21px;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+    display: grid; place-items: center;
+    padding: 0;
+  }
+  .chip-btn:hover { background: var(--panel-2); color: var(--accent-text); }
+  .chip-btn.remove:hover { background: var(--danger-soft); color: var(--danger); }
+  .load-more-wrap { margin-top: 9px; }
+
+  .empty-state {
+    min-height: 320px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    text-align: center;
+    color: var(--muted);
+    padding: 20px;
+  }
+  .empty-icon { font-size: 34px; opacity: .8; margin-bottom: 4px; }
+  .empty-title { color: var(--text); font-weight: 700; }
+  .chips-empty { color: var(--muted); font-size: 12px; padding: 6px; }
+
+  /* 提交条 */
+  .commit-bar {
+    position: sticky;
+    bottom: 14px;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-top: 16px;
+    padding: 13px 15px;
+    border: 1px solid var(--accent);
+    border-radius: 12px;
+    background: var(--panel);
+    box-shadow: 0 12px 30px rgba(0,0,0,.16), 0 0 0 4px var(--accent-soft);
+  }
+  .commit-info { display: flex; flex-direction: column; gap: 1px; min-width: 200px; }
+  .commit-info strong { font-size: 13px; }
+  .commit-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .commit-actions input { width: 220px; height: 36px; }
+
+  /* 弹窗 */
+  .modal {
+    width: min(440px, calc(100vw - 32px));
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--panel);
+    color: var(--text);
+    box-shadow: 0 24px 60px rgba(0,0,0,.35);
+  }
+  .modal::backdrop { background: rgba(10, 12, 16, .55); backdrop-filter: blur(2px); }
+  .modal form { padding: 18px; }
+  .modal h3 { margin: 0; font-size: 17px; }
+  .modal-desc { margin: 7px 0 0; color: var(--muted); font-size: 13px; }
+  .modal .field { margin-top: 14px; }
+  .modal-error { margin: 9px 0 0; color: var(--danger); font-size: 12px; }
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 18px;
+  }
+
+  /* Toast */
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 90px;
+    transform: translate(-50%, 12px);
+    max-width: min(520px, calc(100vw - 32px));
+    padding: 9px 14px;
+    border-radius: 10px;
+    background: #222226;
+    color: #fff;
+    font-size: 13px;
+    box-shadow: 0 10px 28px rgba(0,0,0,.3);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .2s, transform .2s;
+    z-index: 100;
+  }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+  .toast.err { background: #b4232b; }
+  .toast.warn { background: #8a6100; }
+
+  @media (max-width: 860px) {
+    .layout { grid-template-columns: 1fr; }
+    .groups-card { position: static; }
+    .group-list { max-height: 40vh; }
+    .connect-grid { grid-template-columns: 1fr; }
+    .repo-field, .token-field, .connect-grid > .field:nth-child(2), .connect-grid > .field:nth-child(3) {
+      grid-column: 1;
+      grid-row: auto;
+    }
+    .uid-toolbar input { width: 100%; }
+    .uid-toolbar { align-items: flex-start; }
+    .commit-actions { width: 100%; }
+    .commit-actions input { flex: 1; min-width: 140px; width: auto; }
+    .detail-card { min-height: 360px; }
+  }
+  @media (max-width: 560px) {
+    main { padding: 16px 14px 60px; }
+    .header-inner { padding: 14px 14px; }
+    .brand h1 { font-size: 16px; }
+    .brand p { display: none; }
+    .card { padding: 14px; }
+    .file-tab { min-width: 130px; }
+    .commit-bar { bottom: 8px; padding: 11px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+<header class="app-header">
+  <div class="header-inner">
+    <div class="brand">
+      <span class="brand-icon">🚫</span>
+      <div>
+        <h1>BILIBAN 黑名单维护</h1>
+        <p>直接读取并编辑 GitHub 仓库中的插件黑名单分块</p>
+      </div>
+    </div>
+    <button id="themeBtn" class="theme-btn" type="button" title="切换主题" aria-label="切换主题">🌙</button>
+  </div>
+</header>
+
+<main>
+  <section class="card connect-card" aria-label="连接 GitHub 仓库">
+    <div class="connect-grid">
+      <div class="field repo-field">
+        <label for="repoInput">仓库地址</label>
+        <input type="text" id="repoInput" placeholder="https://github.com/owner/BILI-Blacklist 或 owner/repo" autocomplete="off" spellcheck="false">
+        <span class="hint">支持完整链接、owner/repo，或带 /blob/分支/文件路径 的链接；黑名单路径会自动检测。</span>
+      </div>
+      <div class="field">
+        <label for="branchInput">分支</label>
+        <input type="text" id="branchInput" placeholder="留空使用默认分支" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="field token-field">
+        <label for="tokenInput">GitHub Token（仅保存在本页内存）</label>
+        <div class="input-with-btn">
+          <input type="password" id="tokenInput" placeholder="github_pat_… 或 ghp_…" autocomplete="off" spellcheck="false">
+          <button id="toggleToken" type="button" title="显示/隐藏 Token" aria-label="显示或隐藏 Token">👁</button>
+        </div>
+      </div>
+    </div>
+    <div class="connect-actions">
+      <button id="loadBtn" class="btn primary" type="button">检测并加载</button>
+      <span class="hint">Token 需要目标仓库的 <code>Contents: Read and write</code> 权限；只读公开仓库可留空。</span>
+    </div>
+    <div id="status" class="status" role="status" hidden></div>
+    <p class="security-note">🔐 <strong>Token 只存放在当前页面内存中</strong>：不会写入 localStorage，也不会发送到 <code>api.github.com</code> 以外的地址。刷新或关闭页面后即清除，请勿在公共电脑上使用。</p>
+  </section>
+
+  <section id="editor" hidden>
+    <div class="card source-card">
+      <div class="source-head">
+        <div>
+          <div class="eyebrow">已自动识别</div>
+          <div class="source-title" id="repoMeta">—</div>
+          <div class="source-sub" id="fileSummary"></div>
+        </div>
+        <div class="source-actions">
+          <button id="reloadRepoBtn" class="btn ghost" type="button">重新检测</button>
+        </div>
+      </div>
+      <div class="file-tabs" id="fileTabs" role="tablist" aria-label="检测到的黑名单文件"></div>
+    </div>
+
+    <div class="layout">
+      <aside class="card groups-card">
+        <div class="panel-head">
+          <div>
+            <div class="eyebrow">分组</div>
+            <h2 id="groupCount">分组列表</h2>
+          </div>
+          <button id="addGroupBtn" class="btn soft small" type="button">+ 新建</button>
+        </div>
+        <ul class="group-list" id="groupList"></ul>
+        <div class="file-meta" id="fileMeta"></div>
+      </aside>
+
+      <section class="card detail-card">
+        <div id="groupEmpty" class="empty-state">
+          <div class="empty-icon">📂</div>
+          <div class="empty-title">该文件还没有分组</div>
+          <div class="hint">点击左侧「+ 新建」创建第一个分组</div>
+        </div>
+
+        <div id="groupDetail" hidden>
+          <div class="detail-head">
+            <div class="detail-title">
+              <div class="eyebrow">当前分组</div>
+              <h2 id="groupName">—</h2>
+              <div class="badges" id="groupBadges"></div>
+            </div>
+            <div class="detail-actions">
+              <button id="renameGroupBtn" class="btn ghost small" type="button">重命名</button>
+              <button id="deleteGroupBtn" class="btn danger-ghost small" type="button">删除分组</button>
+            </div>
+          </div>
+
+          <div class="enable-row">
+            <label class="switch" title="启用或停用该分组">
+              <input type="checkbox" id="groupEnabled" aria-label="启用该分组">
+              <span class="slider"></span>
+            </label>
+            <div>
+              <div class="enable-title" id="enabledText">已启用</div>
+              <div class="meta" id="groupMeta"></div>
+            </div>
+          </div>
+
+          <div class="add-uid-row">
+            <input class="grow" type="text" id="addUidInput" placeholder="输入 UID，支持空格、逗号、换行批量添加" inputmode="numeric" aria-label="输入要添加的 UID">
+            <button id="addUidBtn" class="btn primary" type="button">添加 UID</button>
+          </div>
+
+          <div class="uid-toolbar">
+            <div class="uid-toolbar-label">UID 列表 <span id="uidCount" class="hint"></span></div>
+            <input type="search" id="uidFilter" placeholder="筛选 UID…" autocomplete="off" aria-label="筛选 UID">
+          </div>
+
+          <div class="chips" id="uidChips"></div>
+          <div class="load-more-wrap">
+            <button id="loadMoreBtn" class="btn ghost small" type="button" hidden>显示更多</button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="commit-bar" id="commitBar" hidden>
+      <div class="commit-info">
+        <strong id="dirtyInfo">有未提交的更改</strong>
+        <span id="commitHint" class="hint"></span>
+      </div>
+      <div class="commit-actions">
+        <input type="text" id="commitMsg" placeholder="提交说明（可选）" autocomplete="off" aria-label="提交说明">
+        <button id="discardBtn" class="btn ghost" type="button">放弃更改</button>
+        <button id="commitBtn" class="btn primary" type="button">提交到 GitHub</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<dialog id="modal" class="modal" aria-labelledby="modalTitle" aria-describedby="modalDesc">
+  <form id="modalForm">
+    <h3 id="modalTitle">标题</h3>
+    <p id="modalDesc" class="modal-desc"></p>
+    <div id="modalField" class="field">
+      <label id="modalLabel" for="modalInput">名称</label>
+      <input type="text" id="modalInput" autocomplete="off" spellcheck="false">
+    </div>
+    <p id="modalError" class="modal-error" hidden></p>
+    <div class="modal-actions">
+      <button id="modalCancel" class="btn ghost" type="button">取消</button>
+      <button id="modalConfirm" class="btn primary" type="submit">确定</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+(() => {
+  'use strict';
+
+  const API_BASE = 'https://api.github.com';
+  const LS_PREFS = 'biliban-editor:prefs';
+  const LS_THEME = 'biliban-editor:theme';
+  const PAGE_SIZE = 300;
+  const MAX_FILE_SIZE = 1000000;
+
+  const $ = (selector, root = document) => root.querySelector(selector);
+  const els = {
+    themeBtn: $('#themeBtn'),
+    repoInput: $('#repoInput'),
+    branchInput: $('#branchInput'),
+    tokenInput: $('#tokenInput'),
+    toggleToken: $('#toggleToken'),
+    loadBtn: $('#loadBtn'),
+    status: $('#status'),
+    editor: $('#editor'),
+    repoMeta: $('#repoMeta'),
+    fileSummary: $('#fileSummary'),
+    fileTabs: $('#fileTabs'),
+    reloadRepoBtn: $('#reloadRepoBtn'),
+    groupCount: $('#groupCount'),
+    groupList: $('#groupList'),
+    addGroupBtn: $('#addGroupBtn'),
+    fileMeta: $('#fileMeta'),
+    groupEmpty: $('#groupEmpty'),
+    groupDetail: $('#groupDetail'),
+    groupName: $('#groupName'),
+    groupBadges: $('#groupBadges'),
+    groupMeta: $('#groupMeta'),
+    renameGroupBtn: $('#renameGroupBtn'),
+    deleteGroupBtn: $('#deleteGroupBtn'),
+    groupEnabled: $('#groupEnabled'),
+    enabledText: $('#enabledText'),
+    addUidInput: $('#addUidInput'),
+    addUidBtn: $('#addUidBtn'),
+    uidFilter: $('#uidFilter'),
+    uidCount: $('#uidCount'),
+    uidChips: $('#uidChips'),
+    loadMoreBtn: $('#loadMoreBtn'),
+    commitBar: $('#commitBar'),
+    dirtyInfo: $('#dirtyInfo'),
+    commitHint: $('#commitHint'),
+    commitMsg: $('#commitMsg'),
+    discardBtn: $('#discardBtn'),
+    commitBtn: $('#commitBtn'),
+    modal: $('#modal'),
+    modalForm: $('#modalForm'),
+    modalTitle: $('#modalTitle'),
+    modalDesc: $('#modalDesc'),
+    modalField: $('#modalField'),
+    modalLabel: $('#modalLabel'),
+    modalInput: $('#modalInput'),
+    modalError: $('#modalError'),
+    modalCancel: $('#modalCancel'),
+    modalConfirm: $('#modalConfirm'),
+    toast: $('#toast')
+  };
+
+  const state = {
+    token: '',
+    owner: '',
+    repo: '',
+    branch: '',
+    defaultBranch: '',
+    repoInfo: null,
+    files: [],
+    activePath: '',
+    filter: '',
+    limit: PAGE_SIZE,
+    skipped: 0,
+    preferredPath: '',
+    busy: false,
+    committing: false
+  };
+
+  // ==================== 通用工具 ====================
+
+  function genGroupId() {
+    return 'grp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+  }
+
+  function stripBom(text) {
+    return text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text;
+  }
+
+  function encodePath(path) {
+    return String(path || '').split('/').map(encodeURIComponent).join('/');
+  }
+
+  function toBase64(text) {
+    const bytes = new TextEncoder().encode(text);
+    let binary = '';
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return btoa(binary);
+  }
+
+  function fromBase64(base64) {
+    const binary = atob(String(base64 || '').replace(/\s/g, ''));
+    const bytes = Uint8Array.from(binary, ch => ch.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  }
+
+  function activeFile() {
+    return state.files.find(file => file.path === state.activePath) || null;
+  }
+
+  function activeGroup() {
+    const file = activeFile();
+    if (!file) return null;
+    return file.data.groups[file.activeGroupIdx] || null;
+  }
+
+  function isDirty(file) {
+    return JSON.stringify(file.data) !== file.snapshot;
+  }
+
+  function hasDirty() {
+    return state.files.some(isDirty);
+  }
+
+  function countUids(file) {
+    return (file.data.groups || []).reduce((sum, group) => sum + (group.uids || []).length, 0);
+  }
+
+  function fileDisplayName(file) {
+    if (file.kind === 'chunk' && typeof file.data.chunkName === 'string' && file.data.chunkName.trim()) {
+      return file.data.chunkName.trim();
+    }
+    return file.name.replace(/\.json$/i, '');
+  }
+
+  function setStatus(text, type = 'info', link) {
+    els.status.hidden = false;
+    els.status.className = 'status ' + type;
+    els.status.textContent = text;
+    if (link) {
+      const anchor = document.createElement('a');
+      anchor.href = link;
+      anchor.target = '_blank';
+      anchor.rel = 'noopener noreferrer';
+      anchor.textContent = '查看提交';
+      els.status.append(' ', anchor);
+    }
+  }
+
+  function clearStatus() {
+    els.status.hidden = true;
+    els.status.className = 'status';
+    els.status.textContent = '';
+  }
+
+  let toastTimer = 0;
+  function toast(text, type = 'ok') {
+    els.toast.textContent = text;
+    els.toast.className = 'toast show' + (type === 'ok' ? '' : ' ' + type);
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      els.toast.classList.remove('show');
+    }, 2600);
+  }
+
+  function validateUid(value) {
+    if (!/^\d+$/.test(value)) return 'UID 只能包含数字';
+    const uid = Number(value);
+    if (!Number.isSafeInteger(uid) || uid <= 0) return 'UID 必须是有效的正整数';
+    return '';
+  }
+
+  // ==================== 主题 ====================
+
+  function applyTheme(theme, persist) {
+    document.documentElement.dataset.theme = theme;
+    const isDark = theme === 'dark';
+    els.themeBtn.textContent = isDark ? '☀️' : '🌙';
+    els.themeBtn.title = isDark ? '切换到白天模式' : '切换到黑夜模式';
+    els.themeBtn.setAttribute('aria-label', els.themeBtn.title);
+    if (persist) {
+      try { localStorage.setItem(LS_THEME, theme); } catch (e) { /* ignore */ }
+    }
+  }
+
+  function initTheme() {
+    const current = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+    applyTheme(current, false);
+  }
+
+  // ==================== 弹窗 ====================
+
+  let dialogState = null;
+
+  function openDialog(options) {
+    if (dialogState) {
+      const previous = dialogState;
+      dialogState = null;
+      previous.resolve(null);
+      if (els.modal.open) els.modal.close();
+    }
+
+    return new Promise(resolve => {
+      els.modalTitle.textContent = options.title || '';
+      els.modalDesc.textContent = options.description || '';
+      els.modalDesc.hidden = !options.description;
+      els.modalField.hidden = !options.label;
+      els.modalLabel.textContent = options.label || '';
+      els.modalInput.value = options.value || '';
+      els.modalInput.placeholder = options.placeholder || '';
+      els.modalInput.inputMode = options.inputMode || 'text';
+      els.modalError.hidden = true;
+      els.modalError.textContent = '';
+      els.modalConfirm.textContent = options.confirmText || '确定';
+      els.modalConfirm.className = 'btn ' + (options.danger ? 'danger' : 'primary');
+
+      dialogState = { resolve, validate: options.validate || null };
+      els.modal.showModal();
+
+      if (options.label) {
+        setTimeout(() => {
+          els.modalInput.focus();
+          els.modalInput.select();
+        }, 0);
+      } else {
+        els.modalConfirm.focus();
+      }
+    });
+  }
+
+  function finishDialog(value) {
+    const current = dialogState;
+    if (!current) return;
+    dialogState = null;
+    if (els.modal.open) els.modal.close();
+    current.resolve(value);
+  }
+
+  els.modalForm.addEventListener('submit', event => {
+    event.preventDefault();
+    if (!dialogState) return;
+    if (els.modalField.hidden) {
+      finishDialog(true);
+      return;
+    }
+    const value = els.modalInput.value.trim();
+    const error = dialogState.validate ? dialogState.validate(value) : (value ? '' : '不能为空');
+    if (error) {
+      els.modalError.textContent = error;
+      els.modalError.hidden = false;
+      els.modalInput.focus();
+      return;
+    }
+    finishDialog(value);
+  });
+
+  els.modalCancel.addEventListener('click', () => finishDialog(null));
+  els.modal.addEventListener('cancel', event => {
+    if (dialogState) {
+      event.preventDefault();
+      finishDialog(null);
+    }
+  });
+
+  // ==================== GitHub API ====================
+
+  class GhError extends Error {
+    constructor(message, status = 0, data = null) {
+      super(message);
+      this.name = 'GhError';
+      this.status = status;
+      this.data = data;
+    }
+  }
+
+  function contentsEndpoint(path = '') {
+    return '/repos/' + encodeURIComponent(state.owner) + '/' + encodeURIComponent(state.repo)
+      + '/contents/' + encodePath(path);
+  }
+
+  function refQuery() {
+    return state.branch ? '?ref=' + encodeURIComponent(state.branch) : '';
+  }
+
+  async function gh(path, options = {}) {
+    const method = options.method || 'GET';
+    const headers = {
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28'
+    };
+    if (state.token) headers.Authorization = 'Bearer ' + state.token;
+    if (options.body !== undefined) headers['Content-Type'] = 'application/json';
+
+    let response;
+    try {
+      response = await fetch(API_BASE + path, {
+        method,
+        headers,
+        body: options.body === undefined ? undefined : JSON.stringify(options.body),
+        cache: 'no-store'
+      });
+    } catch (e) {
+      throw new GhError('网络请求失败，请检查网络或 GitHub 是否可访问');
+    }
+
+    const text = await response.text();
+    let data = null;
+    if (text) {
+      try { data = JSON.parse(text); } catch (e) { /* ignore */ }
+    }
+
+    if (!response.ok) {
+      let message = (data && data.message) || ('HTTP ' + response.status);
+      if (response.status === 403 && response.headers.get('x-ratelimit-remaining') === '0') {
+        const reset = Number(response.headers.get('x-ratelimit-reset')) * 1000;
+        message = 'GitHub API 频率超限' + (reset ? '，请于 ' + new Date(reset).toLocaleTimeString() + ' 后重试' : '');
+      }
+      throw new GhError(message, response.status, data);
+    }
+    return data;
+  }
+
+  function describeError(error) {
+    if (!(error instanceof GhError)) return error && error.message ? error.message : '操作失败';
+    if (error.status === 401) return '认证失败：Token 无效或已过期（401）';
+    if (error.status === 403) return '无权限或频率受限（403）：' + error.message;
+    if (error.status === 404) {
+      if (!error.data) return error.message;
+      return state.token
+        ? '仓库、分支或文件不存在，或 Token 无权访问（404）'
+        : '仓库不存在，或为私有仓库（请在填写 Token 后重试）';
+    }
+    if (error.status === 409) return '提交冲突：远端文件已被修改，请重新检测后再编辑（409）';
+    if (error.status === 422) return '请求无效：请检查分支是否存在，以及提交内容是否合法（422）';
+    return error.message;
+  }
+
+  function parseRepoInput(raw) {
+    const input = String(raw || '').trim();
+    if (!input) return null;
+
+    let match = input.match(/^https?:\/\/(?:www\.)?github\.com\/([^\/\s?#]+)\/([^\/\s?#]+)(.*)$/i);
+    if (!match) match = input.match(/^(?:www\.)?github\.com\/([^\/\s?#]+)\/([^\/\s?#]+)(.*)$/i);
+    if (!match) {
+      const short = input.match(/^([^\/\s?#]+)\/([^\/\s?#]+)(.*)$/);
+      if (short && (!short[3] || /^\/(?:blob|tree)\//i.test(short[3]))) match = short;
+    }
+
+    let owner = '';
+    let repo = '';
+    let rest = '';
+
+    if (match) {
+      owner = match[1];
+      repo = match[2].replace(/\.git$/i, '');
+      rest = match[3] || '';
+    } else {
+      const ssh = input.match(/^git@github\.com:([^\/\s]+)\/(.+?)(?:\.git)?$/i);
+      if (!ssh) return null;
+      owner = ssh[1];
+      repo = ssh[2].replace(/\.git$/i, '');
+    }
+
+    if (!/^[A-Za-z0-9_.-]+$/.test(owner) || !/^[A-Za-z0-9_.-]+$/.test(repo)) return null;
+
+    let branch = '';
+    let path = '';
+    const linked = rest.match(/^\/(?:blob|tree)\/([^\/]+)(?:\/(.+?))?\/?$/i);
+    if (linked) {
+      const branchPart = linked[1].split(/[?#]/)[0];
+      try { branch = decodeURIComponent(branchPart); } catch (e) { branch = branchPart; }
+      if (linked[2]) {
+        const clean = linked[2].split(/[?#]/)[0];
+        try { path = decodeURIComponent(clean); } catch (e) { path = clean; }
+      }
+    }
+
+    return { owner, repo, branch, path };
+  }
+
+  function isBlacklistData(data) {
+    return !!data
+      && typeof data === 'object'
+      && !Array.isArray(data)
+      && Array.isArray(data.groups)
+      && data.groups.every(group =>
+        group && typeof group === 'object' && !Array.isArray(group)
+        && (group.uids === undefined || group.uids === null || Array.isArray(group.uids))
+      );
+  }
+
+  function normalizeFile(meta, data) {
+    for (const group of data.groups) {
+      if (!Array.isArray(group.uids)) group.uids = [];
+      if (typeof group.id !== 'string' || !group.id) group.id = genGroupId();
+    }
+    const isChunk = typeof data.chunkId === 'string' && data.chunkId.trim() !== '';
+    return {
+      path: meta.path,
+      name: meta.name,
+      sha: meta.sha,
+      size: Number(meta.size) || 0,
+      kind: isChunk ? 'chunk' : 'legacy',
+      data,
+      snapshot: JSON.stringify(data),
+      activeGroupIdx: 0,
+      commitUrl: ''
+    };
+  }
+
+  async function readOneFile(path) {
+    const file = await gh(contentsEndpoint(path) + refQuery());
+    if (Array.isArray(file)) throw new GhError('该路径是目录，请填写具体的 JSON 文件', 0);
+    if (!file || typeof file.content !== 'string' || !file.content) {
+      throw new GhError('文件内容为空，或超过 Contents API 的 1MB 限制', 0);
+    }
+    const text = stripBom(fromBase64(file.content));
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      throw new GhError('JSON 解析失败', 0);
+    }
+    if (!isBlacklistData(data)) return null;
+    return normalizeFile(file, data);
+  }
+
+  async function mapLimit(items, limit, task) {
+    const results = new Array(items.length);
+    let cursor = 0;
+    async function worker() {
+      while (cursor < items.length) {
+        const index = cursor++;
+        results[index] = await task(items[index], index);
+      }
+    }
+    const workers = Array.from({ length: Math.min(limit, items.length) }, worker);
+    await Promise.all(workers);
+    return results;
+  }
+
+  async function detectFiles(rootItems) {
+    const jsonItems = rootItems.filter(item => item.type === 'file' && /\.json$/i.test(item.name || ''));
+    const detected = await mapLimit(jsonItems, 4, async item => {
+      try {
+        if (Number(item.size) > MAX_FILE_SIZE) {
+          state.skipped++;
+          return null;
+        }
+        const file = await gh(contentsEndpoint(item.path) + refQuery());
+        if (Array.isArray(file) || !file || typeof file.content !== 'string' || !file.content) {
+          state.skipped++;
+          return null;
+        }
+        const text = stripBom(fromBase64(file.content));
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch (e) {
+          state.skipped++;
+          return null;
+        }
+        if (!isBlacklistData(data)) {
+          state.skipped++;
+          return null;
+        }
+        return normalizeFile(file, data);
+      } catch (error) {
+        if (error instanceof GhError && error.status === 404) {
+          state.skipped++;
+          return null;
+        }
+        throw error;
+      }
+    });
+
+    const files = detected.filter(Boolean);
+    files.sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind === 'chunk' ? -1 : 1;
+      return a.name.localeCompare(b.name, 'zh-CN');
+    });
+    return files;
+  }
+
+  // ==================== 加载 ====================
+
+  function setBusy(busy) {
+    state.busy = busy;
+    els.loadBtn.disabled = busy;
+    els.loadBtn.textContent = busy ? '检测中…' : '检测并加载';
+    els.reloadRepoBtn.disabled = busy;
+  }
+
+  function savePrefs() {
+    try {
+      localStorage.setItem(LS_PREFS, JSON.stringify({
+        repo: els.repoInput.value.trim(),
+        branch: els.branchInput.value.trim()
+      }));
+    } catch (e) { /* ignore */ }
+  }
+
+  async function loadFromRepo() {
+    if (state.busy || state.committing) return;
+
+    if (hasDirty()) {
+      const confirmed = await openDialog({
+        title: '放弃未提交的更改？',
+        description: '重新检测会丢弃当前所有未提交的修改，并从仓库重新读取黑名单。',
+        confirmText: '放弃并重新检测',
+        danger: true
+      });
+      if (!confirmed) return;
+    }
+
+    const parsed = parseRepoInput(els.repoInput.value);
+    if (!parsed) {
+      setStatus('仓库地址格式不正确，请填写 https://github.com/owner/repo 或 owner/repo', 'err');
+      return;
+    }
+
+    state.token = els.tokenInput.value.trim();
+    state.owner = parsed.owner;
+    state.repo = parsed.repo;
+    state.preferredPath = parsed.path || '';
+    state.files = [];
+    state.activePath = '';
+    state.filter = '';
+    state.limit = PAGE_SIZE;
+    state.skipped = 0;
+    state.repoInfo = null;
+    els.editor.hidden = true;
+    els.uidFilter.value = '';
+    clearStatus();
+    setBusy(true);
+    setStatus('正在连接 GitHub…', 'info');
+
+    try {
+      const info = await gh('/repos/' + encodeURIComponent(state.owner) + '/' + encodeURIComponent(state.repo));
+      state.repoInfo = info;
+      state.defaultBranch = info.default_branch || 'main';
+      const explicitBranch = parsed.branch || els.branchInput.value.trim();
+      state.branch = explicitBranch || state.defaultBranch;
+      if (explicitBranch) els.branchInput.value = state.branch;
+
+      let rootItems;
+      try {
+        rootItems = await gh(contentsEndpoint('') + refQuery());
+      } catch (error) {
+        if (error instanceof GhError && error.status === 404) {
+          throw new GhError(info.size === 0
+            ? '仓库为空，尚未推送任何黑名单'
+            : '分支「' + state.branch + '」不存在，或仓库根目录不可访问', 404);
+        }
+        throw error;
+      }
+      if (!Array.isArray(rootItems)) throw new GhError('无法读取仓库根目录', 0);
+
+      setStatus('仓库已连接，正在自动检测黑名单文件…', 'info');
+      let files = await detectFiles(rootItems);
+
+      if (state.preferredPath && !files.some(file => file.path === state.preferredPath)) {
+        try {
+          const preferred = await readOneFile(state.preferredPath);
+          if (preferred) files.unshift(preferred);
+        } catch (e) { /* 链接中的路径无法读取时，继续使用自动检测结果 */ }
+      }
+
+      if (!files.length) {
+        throw new GhError('未检测到插件黑名单文件：仓库根目录中应以 JSON 文件保存包含 groups 数组的数据'
+          + (state.skipped ? '（已跳过 ' + state.skipped + ' 个 JSON）' : ''), 0);
+      }
+
+      state.files = files;
+      const preferred = state.preferredPath && files.find(file => file.path === state.preferredPath);
+      state.activePath = preferred ? preferred.path : files[0].path;
+      renderAll();
+      els.editor.hidden = false;
+      savePrefs();
+
+      const totalGroups = files.reduce((sum, file) => sum + file.data.groups.length, 0);
+      let message = '✅ 已自动识别 ' + files.length + ' 个黑名单文件 · '
+        + totalGroups + ' 个分组 · ' + files.reduce((sum, file) => sum + countUids(file), 0) + ' 个 UID';
+      if (state.skipped) message += ' · 已忽略 ' + state.skipped + ' 个非黑名单 JSON';
+      if (state.repoInfo.permissions && state.repoInfo.permissions.push === false) {
+        message += ' · ⚠️ 当前 Token 可能没有写权限';
+      }
+      setStatus(message, state.repoInfo.permissions && state.repoInfo.permissions.push === false ? 'warn' : 'ok');
+    } catch (error) {
+      setStatus(describeError(error), 'err');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // ==================== 渲染 ====================
+
+  function renderAll() {
+    renderFileTabs();
+    renderGroups();
+    renderDetail();
+    renderSummary();
+    renderFileMeta();
+    updateCommitBar();
+  }
+
+  function renderSummary() {
+    const totalGroups = state.files.reduce((sum, file) => sum + file.data.groups.length, 0);
+    const totalUids = state.files.reduce((sum, file) => sum + countUids(file), 0);
+    els.repoMeta.textContent = state.owner + '/' + state.repo + ' @ ' + state.branch;
+    let summary = state.files.length + ' 个黑名单文件 · ' + totalGroups + ' 个分组 · ' + totalUids + ' 个 UID';
+    if (state.skipped) summary += ' · 已忽略 ' + state.skipped + ' 个非黑名单 JSON';
+    els.fileSummary.textContent = summary;
+  }
+
+  function renderFileTabs() {
+    const scrollLeft = els.fileTabs.scrollLeft;
+    els.fileTabs.textContent = '';
+
+    for (const file of state.files) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'file-tab' + (file.path === state.activePath ? ' active' : '');
+      button.setAttribute('role', 'tab');
+      button.setAttribute('aria-selected', file.path === state.activePath ? 'true' : 'false');
+      button.title = file.path;
+
+      const top = document.createElement('div');
+      top.className = 'file-tab-top';
+
+      const name = document.createElement('span');
+      name.className = 'file-tab-name';
+      name.textContent = fileDisplayName(file);
+      top.appendChild(name);
+
+      const kind = document.createElement('span');
+      kind.className = 'kind';
+      kind.textContent = file.kind === 'chunk' ? '分块' : '整包';
+      top.appendChild(kind);
+
+      if (isDirty(file)) {
+        const dot = document.createElement('span');
+        dot.className = 'dirty-dot';
+        dot.title = '有未提交的更改';
+        top.appendChild(dot);
+      }
+
+      const meta = document.createElement('div');
+      meta.className = 'file-tab-meta';
+      meta.textContent = file.data.groups.length + ' 组 · ' + countUids(file) + ' UID';
+
+      button.append(top, meta);
+      button.addEventListener('click', () => switchFile(file.path));
+      els.fileTabs.appendChild(button);
+    }
+
+    els.fileTabs.scrollLeft = scrollLeft;
+  }
+
+  function renderGroups() {
+    const file = activeFile();
+    const scrollTop = els.groupList.scrollTop;
+    els.groupList.textContent = '';
+
+    if (!file) {
+      els.groupCount.textContent = '分组列表';
+      return;
+    }
+
+    const groups = file.data.groups;
+    els.groupCount.textContent = '分组列表（' + groups.length + '）';
+
+    if (!groups.length) {
+      const li = document.createElement('li');
+      li.className = 'chips-empty';
+      li.textContent = '暂无分组';
+      els.groupList.appendChild(li);
+      return;
+    }
+
+    groups.forEach((group, index) => {
+      const li = document.createElement('li');
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'group-item'
+        + (index === file.activeGroupIdx ? ' active' : '')
+        + (group.enabled ? '' : ' off');
+      button.title = (group.name || '未命名分组') + ' · ' + (group.uids || []).length + ' 个 UID';
+
+      const dot = document.createElement('span');
+      dot.className = 'status-dot';
+      dot.title = group.enabled ? '已启用' : '已停用';
+
+      const name = document.createElement('span');
+      name.className = 'group-name';
+      name.textContent = group.name || '未命名分组';
+
+      const count = document.createElement('span');
+      count.className = 'group-count';
+      count.textContent = String((group.uids || []).length);
+
+      button.append(dot, name, count);
+      button.addEventListener('click', () => selectGroup(index));
+      li.appendChild(button);
+      els.groupList.appendChild(li);
+    });
+
+    els.groupList.scrollTop = scrollTop;
+  }
+
+  function renderDetail() {
+    const file = activeFile();
+    const group = activeGroup();
+
+    if (!file || !group) {
+      els.groupDetail.hidden = true;
+      els.groupEmpty.hidden = false;
+      return;
+    }
+
+    els.groupEmpty.hidden = true;
+    els.groupDetail.hidden = false;
+
+    els.groupName.textContent = group.name || '未命名分组';
+
+    els.groupBadges.textContent = '';
+    const statusBadge = document.createElement('span');
+    statusBadge.className = 'badge ' + (group.enabled ? 'on' : 'off');
+    statusBadge.textContent = group.enabled ? '已启用' : '已停用';
+    els.groupBadges.appendChild(statusBadge);
+
+    const countBadge = document.createElement('span');
+    countBadge.className = 'badge';
+    countBadge.textContent = (group.uids || []).length + ' 个 UID';
+    els.groupBadges.appendChild(countBadge);
+
+    const fileBadge = document.createElement('span');
+    fileBadge.className = 'badge';
+    fileBadge.textContent = file.kind === 'chunk' ? '分块文件' : '整包备份';
+    els.groupBadges.appendChild(fileBadge);
+
+    els.groupEnabled.checked = !!group.enabled;
+    els.enabledText.textContent = group.enabled ? '该分组已启用' : '该分组已停用';
+    els.groupMeta.textContent = '分组 ID：' + (group.id || '—') + ' · 修改后需提交才会写入仓库';
+
+    renderChips();
+  }
+
+  function renderChips() {
+    const group = activeGroup();
+    if (!group) return;
+
+    const scrollTop = els.uidChips.scrollTop;
+    els.uidChips.textContent = '';
+
+    const uids = group.uids || [];
+    const filter = state.filter.trim().toLowerCase();
+    const matched = [];
+    for (let i = 0; i < uids.length; i++) {
+      if (!filter || String(uids[i]).toLowerCase().includes(filter)) matched.push(i);
+    }
+
+    const shown = matched.slice(0, state.limit);
+    els.uidCount.textContent = filter
+      ? '显示 ' + shown.length + ' / 匹配 ' + matched.length + ' / 共 ' + uids.length
+      : '共 ' + uids.length + ' 个';
+
+    if (!shown.length) {
+      const empty = document.createElement('div');
+      empty.className = 'chips-empty';
+      empty.textContent = filter ? '没有匹配的 UID' : '该分组暂无 UID';
+      els.uidChips.appendChild(empty);
+    } else {
+      const fragment = document.createDocumentFragment();
+      for (const index of shown) {
+        const uid = uids[index];
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+
+        const text = document.createElement('span');
+        text.className = 'chip-uid';
+        text.textContent = String(uid);
+
+        const edit = document.createElement('button');
+        edit.type = 'button';
+        edit.className = 'chip-btn';
+        edit.textContent = '✎';
+        edit.title = '修改 UID';
+        edit.setAttribute('aria-label', '修改 UID ' + uid);
+        edit.addEventListener('click', () => editUid(index));
+
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'chip-btn remove';
+        remove.textContent = '×';
+        remove.title = '从分组移除';
+        remove.setAttribute('aria-label', '移除 UID ' + uid);
+        remove.addEventListener('click', () => removeUid(index));
+
+        chip.append(text, edit, remove);
+        fragment.appendChild(chip);
+      }
+      els.uidChips.appendChild(fragment);
+    }
+
+    const remaining = matched.length - shown.length;
+    els.loadMoreBtn.hidden = remaining <= 0;
+    els.loadMoreBtn.textContent = '显示更多（剩余 ' + Math.max(0, remaining) + '）';
+    els.uidChips.scrollTop = scrollTop;
+  }
+
+  function renderFileMeta() {
+    const file = activeFile();
+    if (!file) {
+      els.fileMeta.textContent = '';
+      return;
+    }
+    const kind = file.kind === 'chunk'
+      ? '分块 ' + fileDisplayName(file) + ' · ' + (file.data.chunkId || '')
+      : '旧版整包备份';
+    els.fileMeta.textContent = file.path + '\n' + kind + '\n' + file.size + ' 字节 · SHA ' + String(file.sha || '').slice(0, 8)
+      + (isDirty(file) ? ' · 有未提交更改' : '');
+    els.fileMeta.style.whiteSpace = 'pre-line';
+  }
+
+  function isTargetChanged() {
+    const parsed = parseRepoInput(els.repoInput.value);
+    if (!parsed) return true;
+    if (parsed.owner !== state.owner || parsed.repo !== state.repo) return true;
+    if (parsed.branch && parsed.branch !== state.branch) return true;
+    const desiredBranch = els.branchInput.value.trim() || state.defaultBranch;
+    return desiredBranch !== state.branch;
+  }
+
+  function updateCommitBar() {
+    const dirtyFiles = state.files.filter(isDirty);
+    if (!dirtyFiles.length) {
+      els.commitBar.hidden = true;
+      return;
+    }
+
+    const targetChanged = isTargetChanged();
+    const totalUids = state.files.reduce((sum, file) => sum + countUids(file), 0);
+    els.commitBar.hidden = false;
+    els.dirtyInfo.textContent = dirtyFiles.length + ' 个文件有未提交更改 · 当前共 ' + totalUids + ' 个 UID';
+    if (targetChanged) {
+      els.commitHint.textContent = '仓库或分支已修改，请先重新检测再提交';
+    } else {
+      els.commitHint.textContent = state.token
+        ? '提交后请在插件中拉取对应分块以应用'
+        : '提交前请在上方填写 GitHub Token';
+    }
+    els.commitBtn.disabled = state.committing || !state.token || targetChanged;
+  }
+
+  // ==================== 交互 ====================
+
+  function switchFile(path) {
+    if (state.activePath === path) return;
+    state.activePath = path;
+    state.filter = '';
+    state.limit = PAGE_SIZE;
+    els.uidFilter.value = '';
+    els.addUidInput.value = '';
+    const file = activeFile();
+    if (file && file.activeGroupIdx >= file.data.groups.length) file.activeGroupIdx = 0;
+    renderAll();
+  }
+
+  function selectGroup(index) {
+    const file = activeFile();
+    if (!file) return;
+    file.activeGroupIdx = index;
+    state.filter = '';
+    state.limit = PAGE_SIZE;
+    els.uidFilter.value = '';
+    els.addUidInput.value = '';
+    renderGroups();
+    renderDetail();
+  }
+
+  function afterEdit(options = {}) {
+    renderFileTabs();
+    renderGroups();
+    renderDetail();
+    renderSummary();
+    renderFileMeta();
+    updateCommitBar();
+    if (options.focusAdd) els.addUidInput.focus();
+  }
+
+  async function addGroup() {
+    const file = activeFile();
+    if (!file) return;
+
+    const name = await openDialog({
+      title: '新建分组',
+      description: '新建的分组会写入当前文件，分组 ID 自动生成。',
+      label: '分组名称',
+      placeholder: '例如：广告号、杠精…',
+      confirmText: '创建',
+      validate: value => !value ? '请输入分组名称' : (value.length > 100 ? '名称不能超过 100 个字符' : '')
+    });
+    if (!name) return;
+
+    const group = { id: genGroupId(), name, enabled: true, uids: [] };
+    if (file.kind === 'chunk' && file.data.chunkId) group.chunkId = file.data.chunkId;
+    file.data.groups.push(group);
+    file.activeGroupIdx = file.data.groups.length - 1;
+    state.filter = '';
+    state.limit = PAGE_SIZE;
+    els.uidFilter.value = '';
+    afterEdit();
+    toast('已新建分组「' + name + '」');
+  }
+
+  async function renameGroup() {
+    const group = activeGroup();
+    if (!group) return;
+
+    const name = await openDialog({
+      title: '重命名分组',
+      label: '分组名称',
+      value: group.name || '',
+      confirmText: '保存',
+      validate: value => !value ? '请输入分组名称' : (value.length > 100 ? '名称不能超过 100 个字符' : '')
+    });
+    if (!name || name === group.name) return;
+
+    group.name = name;
+    afterEdit();
+    toast('分组已重命名为「' + name + '」');
+  }
+
+  async function deleteGroup() {
+    const file = activeFile();
+    const group = activeGroup();
+    if (!file || !group) return;
+
+    const confirmed = await openDialog({
+      title: '删除分组',
+      description: '确定删除分组「' + (group.name || '未命名分组') + '」及其中的 '
+        + (group.uids || []).length + ' 个 UID 吗？提交后才会同步到 GitHub。',
+      confirmText: '删除',
+      danger: true
+    });
+    if (!confirmed) return;
+
+    const index = file.activeGroupIdx;
+    file.data.groups.splice(index, 1);
+    file.activeGroupIdx = Math.min(index, file.data.groups.length - 1);
+    state.filter = '';
+    state.limit = PAGE_SIZE;
+    els.uidFilter.value = '';
+    afterEdit();
+    toast('分组已删除');
+  }
+
+  function addUids() {
+    const group = activeGroup();
+    if (!group) return;
+
+    const raw = els.addUidInput.value.trim();
+    if (!raw) return;
+
+    const tokens = raw.split(/[\s,，、;；]+/).filter(Boolean);
+    let added = 0;
+    let duplicate = 0;
+    let invalid = 0;
+
+    for (const token of tokens) {
+      if (validateUid(token)) {
+        invalid++;
+        continue;
+      }
+      const uid = Number(token);
+      if ((group.uids || []).some(existing => Number(existing) === uid)) {
+        duplicate++;
+        continue;
+      }
+      group.uids.push(uid);
+      added++;
+    }
+
+    if (!added) {
+      const detail = [];
+      if (duplicate) detail.push(duplicate + ' 个已存在');
+      if (invalid) detail.push(invalid + ' 个格式无效');
+      toast('没有添加新 UID' + (detail.length ? '（' + detail.join('，') + '）' : ''), 'warn');
+      return;
+    }
+
+    els.addUidInput.value = '';
+    state.filter = '';
+    state.limit = PAGE_SIZE;
+    els.uidFilter.value = '';
+    afterEdit({ focusAdd: true });
+
+    const detail = [];
+    if (duplicate) detail.push(duplicate + ' 个已存在');
+    if (invalid) detail.push(invalid + ' 个格式无效');
+    toast('已添加 ' + added + ' 个 UID' + (detail.length ? '，忽略 ' + detail.join('，') : ''));
+  }
+
+  async function editUid(index) {
+    const group = activeGroup();
+    if (!group || !(index in group.uids)) return;
+    const oldValue = group.uids[index];
+
+    const value = await openDialog({
+      title: '修改 UID',
+      description: '修改后仅影响当前分组，提交后才会写入仓库。',
+      label: 'UID',
+      value: String(oldValue),
+      inputMode: 'numeric',
+      confirmText: '保存',
+      validate: input => {
+        const error = validateUid(input);
+        if (error) return error;
+        const uid = Number(input);
+        if (group.uids.some((existing, i) => i !== index && Number(existing) === uid)) {
+          return '该 UID 已存在于当前分组';
+        }
+        return '';
+      }
+    });
+    if (value === null) return;
+
+    group.uids[index] = Number(value);
+    afterEdit();
+    toast('UID 已修改：' + oldValue + ' → ' + value);
+  }
+
+  function removeUid(index) {
+    const group = activeGroup();
+    if (!group || !(index in group.uids)) return;
+    const removed = group.uids[index];
+    group.uids.splice(index, 1);
+    afterEdit();
+    toast('已移除 UID ' + removed);
+  }
+
+  async function commitAll() {
+    if (state.busy || state.committing) return;
+
+    const dirtyFiles = state.files.filter(isDirty);
+    if (!dirtyFiles.length) return;
+
+    if (!state.token) {
+      setStatus('提交需要 GitHub Token，请在上方填写后重试', 'err');
+      return;
+    }
+
+    if (isTargetChanged()) {
+      setStatus('仓库或分支已修改，请先点击「重新检测」后再提交', 'err');
+      return;
+    }
+
+    state.committing = true;
+    els.commitBtn.disabled = true;
+    els.discardBtn.disabled = true;
+    els.loadBtn.disabled = true;
+    els.reloadRepoBtn.disabled = true;
+    els.repoInput.disabled = true;
+    els.branchInput.disabled = true;
+    els.tokenInput.disabled = true;
+
+    const baseMessage = els.commitMsg.value.trim() || 'BILIBAN: 更新黑名单（网页编辑器）';
+    let success = 0;
+    let firstUrl = '';
+    let failed = false;
+
+    try {
+      for (let i = 0; i < dirtyFiles.length; i++) {
+        const file = dirtyFiles[i];
+        setStatus('正在提交 ' + (i + 1) + '/' + dirtyFiles.length + '：' + file.path + '…', 'info');
+        const content = JSON.stringify(file.data, null, 2);
+        const submittedSnapshot = JSON.stringify(file.data);
+        try {
+          const result = await gh(contentsEndpoint(file.path), {
+            method: 'PUT',
+            body: {
+              message: dirtyFiles.length > 1 ? baseMessage + ' (' + file.name + ')' : baseMessage,
+              content: toBase64(content),
+              sha: file.sha,
+              branch: state.branch
+            }
+          });
+          if (result && result.content) {
+            if (result.content.sha) file.sha = result.content.sha;
+            if (result.content.size !== undefined) file.size = result.content.size;
+          }
+          file.snapshot = submittedSnapshot;
+          file.commitUrl = (result && result.commit && result.commit.html_url) || '';
+          if (!firstUrl && file.commitUrl) firstUrl = file.commitUrl;
+          success++;
+        } catch (error) {
+          failed = true;
+          setStatus('提交失败（' + file.path + '）：' + describeError(error)
+            + (success ? '；已成功提交 ' + success + ' 个文件' : ''), 'err', firstUrl);
+          break;
+        }
+      }
+    } finally {
+      state.committing = false;
+      els.discardBtn.disabled = false;
+      els.loadBtn.disabled = false;
+      els.reloadRepoBtn.disabled = false;
+      els.repoInput.disabled = false;
+      els.branchInput.disabled = false;
+      els.tokenInput.disabled = false;
+      renderAll();
+      if (!failed) {
+        els.commitMsg.value = '';
+        const remaining = state.files.filter(isDirty).length;
+        toast('已提交 ' + success + ' 个文件');
+        setStatus('✅ 已提交 ' + success + ' 个文件，黑名单已写入 GitHub'
+          + (remaining ? '；仍有 ' + remaining + ' 个文件有未提交更改' : ''),
+          remaining ? 'warn' : 'ok', firstUrl);
+      }
+    }
+  }
+
+  // ==================== 事件绑定 ====================
+
+  els.themeBtn.addEventListener('click', () => {
+    const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+    applyTheme(next, true);
+  });
+
+  els.loadBtn.addEventListener('click', loadFromRepo);
+  els.reloadRepoBtn.addEventListener('click', loadFromRepo);
+  els.discardBtn.addEventListener('click', loadFromRepo);
+  els.commitBtn.addEventListener('click', commitAll);
+  els.addGroupBtn.addEventListener('click', addGroup);
+  els.renameGroupBtn.addEventListener('click', renameGroup);
+  els.deleteGroupBtn.addEventListener('click', deleteGroup);
+  els.addUidBtn.addEventListener('click', addUids);
+  els.addUidInput.addEventListener('keydown', event => {
+    if (event.key === 'Enter') addUids();
+  });
+
+  els.uidFilter.addEventListener('input', event => {
+    state.filter = event.target.value;
+    state.limit = PAGE_SIZE;
+    renderChips();
+  });
+
+  els.loadMoreBtn.addEventListener('click', () => {
+    state.limit += PAGE_SIZE;
+    renderChips();
+  });
+
+  els.groupEnabled.addEventListener('change', () => {
+    const group = activeGroup();
+    if (!group) return;
+    group.enabled = els.groupEnabled.checked;
+    afterEdit();
+    toast(group.enabled ? '分组已启用' : '分组已停用');
+  });
+
+  els.tokenInput.addEventListener('input', () => {
+    state.token = els.tokenInput.value.trim();
+    updateCommitBar();
+  });
+
+  els.repoInput.addEventListener('input', updateCommitBar);
+  els.branchInput.addEventListener('input', updateCommitBar);
+
+  els.toggleToken.addEventListener('click', () => {
+    const show = els.tokenInput.type === 'password';
+    els.tokenInput.type = show ? 'text' : 'password';
+    els.toggleToken.textContent = show ? '🙈' : '👁';
+    els.toggleToken.setAttribute('aria-label', show ? '隐藏 Token' : '显示 Token');
+  });
+
+  for (const input of [els.repoInput, els.branchInput, els.tokenInput]) {
+    input.addEventListener('keydown', event => {
+      if (event.key === 'Enter') loadFromRepo();
+    });
+  }
+
+  window.addEventListener('beforeunload', event => {
+    if (hasDirty()) {
+      event.preventDefault();
+      event.returnValue = '';
+    }
+  });
+
+  // 初始化
+  initTheme();
+  try {
+    const saved = JSON.parse(localStorage.getItem(LS_PREFS) || 'null');
+    if (saved) {
+      if (saved.repo) els.repoInput.value = saved.repo;
+      if (saved.branch) els.branchInput.value = saved.branch;
+    }
+  } catch (e) { /* ignore */ }
+})();
+</script>
+</body>
+</html>
