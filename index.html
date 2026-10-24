@@ -273,6 +273,7 @@
     gap: 14px;
     flex-wrap: wrap;
   }
+  .source-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .source-title { font-size: 15px; font-weight: 700; word-break: break-all; }
   .source-sub { margin-top: 3px; font-size: 12px; color: var(--muted); }
   .file-tabs {
@@ -411,6 +412,7 @@
   }
 
   /* 详情 */
+  #editor.is-busy { pointer-events: none; opacity: .88; }
   .detail-card { min-height: 420px; }
   .detail-head {
     display: flex;
@@ -583,7 +585,7 @@
   .modal::backdrop { background: rgba(10, 12, 16, .55); backdrop-filter: blur(2px); }
   .modal form { padding: 18px; }
   .modal h3 { margin: 0; font-size: 17px; }
-  .modal-desc { margin: 7px 0 0; color: var(--muted); font-size: 13px; }
+  .modal-desc { margin: 7px 0 0; color: var(--muted); font-size: 13px; white-space: pre-line; }
   .modal .field { margin-top: 14px; }
   .modal-error { margin: 9px 0 0; color: var(--danger); font-size: 12px; }
   .modal-actions {
@@ -695,6 +697,7 @@
           <div class="source-sub" id="fileSummary"></div>
         </div>
         <div class="source-actions">
+          <button id="deleteFileBtn" class="btn danger-ghost" type="button" disabled>删除此文件</button>
           <button id="reloadRepoBtn" class="btn ghost" type="button">重新检测</button>
         </div>
       </div>
@@ -818,6 +821,7 @@
     repoMeta: $('#repoMeta'),
     fileSummary: $('#fileSummary'),
     fileTabs: $('#fileTabs'),
+    deleteFileBtn: $('#deleteFileBtn'),
     reloadRepoBtn: $('#reloadRepoBtn'),
     groupCount: $('#groupCount'),
     groupList: $('#groupList'),
@@ -871,7 +875,8 @@
     skipped: 0,
     preferredPath: '',
     busy: false,
-    committing: false
+    committing: false,
+    deleting: false
   };
 
   // ==================== 通用工具 ====================
@@ -1289,6 +1294,7 @@
     els.loadBtn.disabled = busy;
     els.loadBtn.textContent = busy ? '检测中…' : '检测并加载';
     els.reloadRepoBtn.disabled = busy;
+    updateFileDeleteButton();
   }
 
   function savePrefs() {
@@ -1301,7 +1307,7 @@
   }
 
   async function loadFromRepo() {
-    if (state.busy || state.committing) return;
+    if (state.busy || state.committing || state.deleting) return;
 
     if (hasDirty()) {
       const confirmed = await openDialog({
@@ -1402,6 +1408,7 @@
     renderSummary();
     renderFileMeta();
     updateCommitBar();
+    updateFileDeleteButton();
   }
 
   function renderSummary() {
@@ -1632,6 +1639,25 @@
     return desiredBranch !== state.branch;
   }
 
+  function updateFileDeleteButton() {
+    const file = activeFile();
+    if (!file) {
+      els.deleteFileBtn.disabled = true;
+      els.deleteFileBtn.textContent = '删除此文件';
+      els.deleteFileBtn.title = '没有可删除的黑名单文件';
+      return;
+    }
+    els.deleteFileBtn.textContent = file.kind === 'chunk' ? '删除此块' : '删除整包';
+    let reason = '';
+    if (state.deleting) reason = '正在删除文件…';
+    else if (state.busy || state.committing) reason = '正在处理其他操作…';
+    else if (!state.token) reason = '删除文件需要 GitHub Token';
+    else if (isTargetChanged()) reason = '仓库或分支已修改，请先重新检测';
+    els.deleteFileBtn.disabled = !!reason;
+    els.deleteFileBtn.title = reason || '从 GitHub 删除当前文件：' + file.path;
+    els.deleteFileBtn.setAttribute('aria-label', reason || '删除当前黑名单文件');
+  }
+
   function updateCommitBar() {
     const dirtyFiles = state.files.filter(isDirty);
     if (!dirtyFiles.length) {
@@ -1643,14 +1669,16 @@
     const totalUids = state.files.reduce((sum, file) => sum + countUids(file), 0);
     els.commitBar.hidden = false;
     els.dirtyInfo.textContent = dirtyFiles.length + ' 个文件有未提交更改 · 当前共 ' + totalUids + ' 个 UID';
-    if (targetChanged) {
+    if (state.deleting) {
+      els.commitHint.textContent = '正在删除文件，请稍候…';
+    } else if (targetChanged) {
       els.commitHint.textContent = '仓库或分支已修改，请先重新检测再提交';
     } else {
       els.commitHint.textContent = state.token
         ? '提交后请在插件中拉取对应分块以应用'
         : '提交前请在上方填写 GitHub Token';
     }
-    els.commitBtn.disabled = state.committing || !state.token || targetChanged;
+    els.commitBtn.disabled = state.committing || state.deleting || !state.token || targetChanged;
   }
 
   // ==================== 交互 ====================
@@ -1686,6 +1714,7 @@
     renderSummary();
     renderFileMeta();
     updateCommitBar();
+    updateFileDeleteButton();
     if (options.focusAdd) els.addUidInput.focus();
   }
 
@@ -1754,6 +1783,95 @@
     els.uidFilter.value = '';
     afterEdit();
     toast('分组已删除');
+  }
+
+  async function deleteActiveFile() {
+    const file = activeFile();
+    if (!file || state.deleting || state.busy || state.committing) return;
+
+    if (!state.token) {
+      setStatus('删除文件需要 GitHub Token，请在上方填写后重试', 'err');
+      return;
+    }
+
+    if (isTargetChanged()) {
+      setStatus('仓库或分支已修改，请先点击「重新检测」后再删除', 'err');
+      return;
+    }
+
+    const isChunk = file.kind === 'chunk';
+    const groupCount = file.data.groups.length;
+    const uidCount = countUids(file);
+    const dirty = isDirty(file);
+
+    const confirmed = await openDialog({
+      title: isChunk ? '删除分块文件' : '删除整包备份',
+      description: '确定从 GitHub 删除' + (isChunk ? '分块文件' : '旧版整包备份')
+        + '「' + file.path + '」吗？\n\n'
+        + '该文件包含 ' + groupCount + ' 个分组、' + uidCount + ' 个 UID。'
+        + (dirty ? '\n\n当前文件还有未提交的修改，删除后会一并丢弃。' : '')
+        + (isChunk
+          ? '\n\n删除后插件本地对应的分块不会被自动移除，需要在插件中单独删除该分块。'
+          : '\n\n删除后仅影响云端旧版整包备份，插件本地数据不受影响。'),
+      confirmText: '删除文件',
+      danger: true
+    });
+    if (!confirmed) return;
+
+    const deletedPath = file.path;
+    const deletedName = fileDisplayName(file);
+    state.deleting = true;
+    els.editor.classList.add('is-busy');
+    els.deleteFileBtn.disabled = true;
+    els.loadBtn.disabled = true;
+    els.reloadRepoBtn.disabled = true;
+    els.discardBtn.disabled = true;
+    els.commitBtn.disabled = true;
+    setStatus('正在删除 ' + deletedPath + '…', 'info');
+
+    try {
+      const result = await gh(contentsEndpoint(file.path), {
+        method: 'DELETE',
+        body: {
+          message: 'BILIBAN: 删除黑名单文件 ' + file.name,
+          sha: file.sha,
+          branch: state.branch
+        }
+      });
+
+      const index = state.files.findIndex(item => item.path === file.path);
+      if (index >= 0) state.files.splice(index, 1);
+      state.filter = '';
+      state.limit = PAGE_SIZE;
+      els.uidFilter.value = '';
+      els.addUidInput.value = '';
+
+      const commitUrl = result && result.commit && result.commit.html_url;
+      if (state.files.length) {
+        const next = state.files[Math.min(index, state.files.length - 1)] || state.files[0];
+        state.activePath = next.path;
+        renderAll();
+        setStatus('✅ 已删除' + (isChunk ? '分块' : '整包备份') + '「' + deletedName + '」'
+          + (isChunk ? '；插件本地分块需在插件中单独删除' : ''), 'ok', commitUrl);
+      } else {
+        state.activePath = '';
+        renderAll();
+        els.editor.hidden = true;
+        setStatus('✅ 已删除' + (isChunk ? '分块' : '整包备份') + '「' + deletedName
+          + '」；仓库中已没有检测到的黑名单文件', 'ok', commitUrl);
+      }
+      toast('已删除黑名单文件');
+    } catch (error) {
+      setStatus('删除失败：' + describeError(error), 'err');
+    } finally {
+      state.deleting = false;
+      els.editor.classList.remove('is-busy');
+      els.loadBtn.disabled = false;
+      els.reloadRepoBtn.disabled = false;
+      els.discardBtn.disabled = false;
+      updateFileDeleteButton();
+      updateCommitBar();
+    }
   }
 
   function addUids() {
@@ -1841,7 +1959,7 @@
   }
 
   async function commitAll() {
-    if (state.busy || state.committing) return;
+    if (state.busy || state.committing || state.deleting) return;
 
     const dirtyFiles = state.files.filter(isDirty);
     if (!dirtyFiles.length) return;
@@ -1864,6 +1982,7 @@
     els.repoInput.disabled = true;
     els.branchInput.disabled = true;
     els.tokenInput.disabled = true;
+    updateFileDeleteButton();
 
     const baseMessage = els.commitMsg.value.trim() || 'BILIBAN: 更新黑名单（网页编辑器）';
     let success = 0;
@@ -1930,6 +2049,7 @@
 
   els.loadBtn.addEventListener('click', loadFromRepo);
   els.reloadRepoBtn.addEventListener('click', loadFromRepo);
+  els.deleteFileBtn.addEventListener('click', deleteActiveFile);
   els.discardBtn.addEventListener('click', loadFromRepo);
   els.commitBtn.addEventListener('click', commitAll);
   els.addGroupBtn.addEventListener('click', addGroup);
@@ -1959,13 +2079,18 @@
     toast(group.enabled ? '分组已启用' : '分组已停用');
   });
 
+  function handleTargetInput() {
+    updateCommitBar();
+    updateFileDeleteButton();
+  }
+
   els.tokenInput.addEventListener('input', () => {
     state.token = els.tokenInput.value.trim();
-    updateCommitBar();
+    handleTargetInput();
   });
 
-  els.repoInput.addEventListener('input', updateCommitBar);
-  els.branchInput.addEventListener('input', updateCommitBar);
+  els.repoInput.addEventListener('input', handleTargetInput);
+  els.branchInput.addEventListener('input', handleTargetInput);
 
   els.toggleToken.addEventListener('click', () => {
     const show = els.tokenInput.type === 'password';
