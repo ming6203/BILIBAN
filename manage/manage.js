@@ -21,6 +21,7 @@ const groupsContainer = document.getElementById('groups-container');
 const statsEl = document.getElementById('stats');
 const btnImport = document.getElementById('btn-import');
 const btnExport = document.getElementById('btn-export');
+const btnExportPiliPlus = document.getElementById('btn-export-piliplus');
 const fileImport = document.getElementById('file-import');
 
 const modalOverlay = document.getElementById('modal-overlay');
@@ -583,15 +584,31 @@ btnAddGroup.addEventListener('click', async () => {
 
 // ==================== 本地导入导出 ====================
 
-btnExport.addEventListener('click', async () => {
-  const json = await BilibanStorage.exportData();
-  const blob = new Blob([json], { type: 'application/json' });
+function downloadJson(filename, text) {
+  const blob = new Blob([text], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `biliban_blacklist_${new Date().toISOString().slice(0, 10)}.json`;
+  a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+btnExport.addEventListener('click', async () => {
+  const json = await BilibanStorage.exportData();
+  downloadJson(`biliban_blacklist_${new Date().toISOString().slice(0, 10)}.json`, json);
+});
+
+// 导出 PiliPlus 黑名单：仅启用分组、UID 去重，格式为纯数字数组
+btnExportPiliPlus.addEventListener('click', async () => {
+  const uids = await BilibanStorage.getEnabledUids();
+  if (uids.length === 0) {
+    showToast('⚠️ 启用分组中没有 UID 可导出');
+    return;
+  }
+  const json = JSON.stringify(uids, null, 4) + '\n';
+  downloadJson(`biliban_piliplus_${new Date().toISOString().slice(0, 10)}.json`, json);
+  showToast(`✅ 已导出 ${uids.length} 个 UID（PiliPlus）`);
 });
 
 btnImport.addEventListener('click', () => { fileImport.click(); });
