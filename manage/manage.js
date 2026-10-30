@@ -124,7 +124,6 @@ tabs.forEach(tab => {
     // 切到高级设置时加载设置表单
     if (tab.dataset.tab === 'advanced' && window.__BILIBAN_STATS_UI__) {
       window.__BILIBAN_STATS_UI__.loadAdvSettings();
-      window.__BILIBAN_STATS_UI__.loadBackupSettings();
       window.__BILIBAN_STATS_UI__.loadGithubAccount();
     }
   });
@@ -1449,6 +1448,10 @@ async function init() {
   await render();
   await loadScanSettings();
   await loadScanState();
+  // 清理旧版归档/数据备份遗留键（相关功能已移除）
+  if (typeof BilibanStorage.cleanupLegacyKeys === 'function') {
+    BilibanStorage.cleanupLegacyKeys();
+  }
 }
 
 init();

@@ -43,7 +43,13 @@
           <!-- 分块同步（新建/编辑分块请到完整管理面板） -->
           <div class="chunk-section">
             <div class="chunk-header">
-              <label class="github-label">云端分块</label>
+              <div class="chunk-header-left">
+                <label class="github-label">云端分块</label>
+                <label class="chunk-select-all" title="全选 / 取消全选云端分块">
+                  <input type="checkbox" id="chunk-select-all">
+                  <span>全选</span>
+                </label>
+              </div>
               <span class="github-hint" style="margin-top:0">编辑分块请到管理面板</span>
             </div>
             <div class="chunk-list" id="chunk-list"></div>
@@ -58,47 +64,13 @@
             <div class="github-hint" id="chunk-sync-status"></div>
           </div>
 
-          <!-- 快捷操作 -->
-          <div class="github-actions">
-            <button id="github-push" class="github-action-btn push">
-              <span class="btn-icon">📦</span><span>推送全部</span>
-            </button>
-            <button id="github-pull" class="github-action-btn pull">
-              <span class="btn-icon">📥</span><span>拉取全部</span>
-            </button>
-          </div>
           <div class="github-hint" id="github-sync-status"></div>
           <div class="github-link" id="github-link" style="display:none">
             <a href="#" target="_blank" id="github-link-url">查看云端备份</a>
           </div>
 
-        <!-- 数据备份（聚合/事件/设置） -->
-        <div class="github-section">
-          <label class="github-label">数据备份</label>
-          <div class="github-hint">备份聚合统计、事件数据与各设置到仓库 data/ 目录</div>
-          <div class="github-actions">
-            <button id="other-push" class="github-action-btn push">
-              <span class="btn-icon">☁️</span><span>推送数据到云</span>
-            </button>
-            <button id="other-restore" class="github-action-btn pull">
-              <span class="btn-icon">🔄</span><span>从云端恢复</span>
-            </button>
-          </div>
-          <div class="github-hint" id="other-status"></div>
-        </div>
-        <div class="github-section">
-          <label class="github-label">云端恢复（按仓库链接）</label>
-          <div class="github-input-row">
-            <input type="text" id="other-repo-input" placeholder="owner/repo 或完整 GitHub 仓库 URL" class="github-input">
-            <button id="other-browse" class="primary-btn-sm">浏览</button>
-          </div>
-          <div class="github-hint">输入其他备份仓库的链接，列出其 data/ 目录内容后按规范路径恢复</div>
-          <div class="github-hint" id="other-browse-status"></div>
-          <div class="other-file-list" id="other-file-list"></div>
-        </div>
         </div>
 
-        <!-- 设置（置于底部） -->
       </div>
 
       <!-- Tab: 社区订阅 -->
@@ -146,7 +118,6 @@
 
   <script src="../lib/storage.js"></script>
   <script src="../lib/github.js"></script>
-  <script src="../lib/backup-sync.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

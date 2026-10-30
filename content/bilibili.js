@@ -418,6 +418,8 @@
     renderer[DONE] = true;
 
     if (blockedUids.has(uid)) {
+      // 数据采集：记录一条回复评论屏蔽事件
+      try { if (window.__BILIBAN_STATS__) window.__BILIBAN_STATS__.collectComment(uid, {}); } catch (e) {}
       const wrap = renderer.closest('bili-comment-reply-renderer') || renderer.parentElement;
       if (wrap) wrap.remove();
       return;
@@ -469,7 +471,7 @@
       
 
       if (blockedUids.has(uid)) {
-        // 数据采集：记录一条视频卡片屏蔽事件（去重由采集器按 bvid_uid 处理）
+        // 数据采集：记录一条视频卡片屏蔽事件
         try { if (window.__BILIBAN_STATS__) window.__BILIBAN_STATS__.collectVideo(uid, {}); } catch (e) {}
         removeCard(card);
         removed = true;
@@ -790,7 +792,13 @@
       const uid = extractBewlyCardUid(card);
       if (!uid) return;
       card[DONE] = true;
-      if (blockedUids.has(uid)) { card.remove(); removed = true; return; }
+      if (blockedUids.has(uid)) {
+        // 数据采集：记录一条 BewlyBewly 视频卡片屏蔽事件
+        try { if (window.__BILIBAN_STATS__) window.__BILIBAN_STATS__.collectVideo(uid, {}); } catch (e) {}
+        card.remove();
+        removed = true;
+        return;
+      }
       injectBewlyBlockBtn(card, uid);
     });
     if (removed) forceReflow();

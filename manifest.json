@@ -1,12 +1,11 @@
 {
   "manifest_version": 3,
   "name": "BILIBAN - B站用户屏蔽",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "屏蔽B站指定用户的弹幕、评论、推荐、搜索和动态",
   "permissions": [
     "storage",
-    "activeTab",
-    "downloads"
+    "activeTab"
   ],
   "action": {
     "default_popup": "popup/popup.html",

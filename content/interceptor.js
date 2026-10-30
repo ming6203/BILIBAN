@@ -1,12 +1,48 @@
 /**
  * BILIBAN API 拦截器 (MAIN world)
  * document_start 运行，拦截 fetch/XHR，在渲染前过滤被屏蔽用户
+ * 过滤掉的条目通过 BILIBAN_BLOCK_EVENT 上报给数据面板采集器
  */
 
 (function() {
   'use strict';
 
   var blockedUids = new Set();
+
+  // API 层过滤事件先缓存，等 isolated world 的统计采集器就绪后再发送，
+  // 避免 document_start 阶段过滤的数据因为接收端尚未加载而丢失。
+  var statsBuffer = [];
+  var statsReady = false;
+  var MAX_STATS_BUFFER = 5000;
+
+  function postBlockEvent(kind, count) {
+    try {
+      window.postMessage({
+        type: 'BILIBAN_BLOCK_EVENT',
+        kind: kind,
+        count: count
+      }, '*');
+    } catch (e) { /* 忽略 */ }
+  }
+
+  function reportBlocked(kind, count) {
+    if (!count || count < 1) return;
+    if (statsReady) {
+      postBlockEvent(kind, count);
+    } else if (statsBuffer.length < MAX_STATS_BUFFER) {
+      statsBuffer.push({ kind: kind, count: count });
+    }
+  }
+
+  window.addEventListener('message', function(event) {
+    if (!event.data || event.data.type !== 'BILIBAN_STATS_READY') return;
+    statsReady = true;
+    var pending = statsBuffer;
+    statsBuffer = [];
+    for (var i = 0; i < pending.length; i++) {
+      postBlockEvent(pending[i].kind, pending[i].count);
+    }
+  });
 
   function initFromStorage() {
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
@@ -107,31 +143,55 @@
       data.data.replies = data.data.replies.filter(function(r) {
         return !blockedUids.has(Number(r.member && r.member.mid || r.mid));
       });
-      if (data.data.replies.length !== before) modified = true;
+      var removed = before - data.data.replies.length;
+      if (removed > 0) {
+        modified = true;
+        reportBlocked('comment', removed);
+      }
     }
     if (data.data && data.data.top_replies) {
+      var beforeTop = data.data.top_replies.length;
       data.data.top_replies = data.data.top_replies.filter(function(r) {
         return !blockedUids.has(Number(r.member && r.member.mid || r.mid));
       });
+      var removedTop = beforeTop - data.data.top_replies.length;
+      if (removedTop > 0) {
+        modified = true;
+        reportBlocked('comment', removedTop);
+      }
     }
     if (data.data && data.data.item) {
       var before2 = data.data.item.length;
       data.data.item = data.data.item.filter(function(item) {
         return !blockedUids.has(Number(item.owner && item.owner.mid || item.mid));
       });
-      if (data.data.item.length !== before2) modified = true;
+      var removed2 = before2 - data.data.item.length;
+      if (removed2 > 0) {
+        modified = true;
+        reportBlocked('video', removed2);
+      }
     }
     if (data.data && data.data.result) {
       var before3 = data.data.result.length;
       data.data.result = data.data.result.filter(function(item) {
         return !blockedUids.has(Number(item.mid));
       });
-      if (data.data.result.length !== before3) modified = true;
+      var removed3 = before3 - data.data.result.length;
+      if (removed3 > 0) {
+        modified = true;
+        reportBlocked('video', removed3);
+      }
     }
     if (data.data && data.data.items) {
+      var before4 = data.data.items.length;
       data.data.items = data.data.items.filter(function(item) {
         return !blockedUids.has(Number(item.modules && item.modules.module_author && item.modules.module_author.mid || item.uid));
       });
+      var removed4 = before4 - data.data.items.length;
+      if (removed4 > 0) {
+        modified = true;
+        reportBlocked('video', removed4);
+      }
     }
     return modified;
   }

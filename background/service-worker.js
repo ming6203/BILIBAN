@@ -1,13 +1,36 @@
-﻿/**
+/**
  * BILIBAN Background Service Worker
  *
  * 职责：
  *  1. 监听存储变化，通知所有 bilibili.com 标签页刷新
  *  2. 评论爬取扫描的调度中枢：接收管理页指令 (start/stop/status)，
  *     在后台发起分页请求、执行黑名单匹配，并将进度/结果实时推送给管理页
+ *  3. 屏蔽统计写入队列：串行合并各标签页上报的视频/评论时间戳
  */
 
 importScripts('comment-crawler.js');
+importScripts(chrome.runtime.getURL('lib/storage.js'));
+
+// ==================== 统计写入队列 ====================
+// 所有标签页的统计批量写入都交给 service worker 串行执行，
+// 避免多个标签页同时对 biliban_block_events 做读-改-写而互相覆盖。
+let statsWriteQueue = Promise.resolve();
+
+function appendStatsBatch(video, comment) {
+  const task = async () => {
+    try {
+      await BilibanStorage.appendBlockEvents(
+        Array.isArray(video) ? video : [],
+        Array.isArray(comment) ? comment : []
+      );
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e && e.message ? e.message : '统计写入失败' };
+    }
+  };
+  statsWriteQueue = statsWriteQueue.then(task, task);
+  return statsWriteQueue;
+}
 
 // ==================== 存储变更 → 广播刷新 ====================
 
@@ -25,6 +48,11 @@ chrome.storage.onChanged.addListener((changes, area) => {
 // ==================== 评论扫描消息路由 ====================
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg && msg.type === 'BILIBAN_STATS_APPEND') {
+    appendStatsBatch(msg.video, msg.comment).then(sendResponse);
+    return true;
+  }
+
   if (!msg || typeof msg.type !== 'string' || !msg.type.startsWith('BILIBAN_SCAN_')) {
     return; // 不处理与扫描无关的消息
   }

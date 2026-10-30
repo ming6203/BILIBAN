@@ -16,7 +16,7 @@ BILIBAN 是一个 Chrome 扩展（Manifest V3），用于屏蔽 B 站指定用�
 
 ### 页面结构（MV3）
 
-1. **Popup**（`popup/popup.html`）：轻量面板，打开即是云同步界面——GitHub 备份/恢复、分块推送拉取、社区订阅拉取、本地导入导出，以及「打开完整管理面板」入口（`chrome.runtime.openOptionsPage()`）。分组/分块管理等重逻辑已迁出。
+1. **Popup**（`popup/popup.html`）：轻量面板，打开即是云同步界面——GitHub 分块推送/拉取、社区订阅拉取、本地导入导出，以及「打开完整管理面板」入口（`chrome.runtime.openOptionsPage()`）。分组/分块管理等重逻辑已迁出。
 
 2. **管理面板**（`manage/manage.html`，`options_ui` 打开）：承载重逻辑功能——黑名单分组/分块管理（拖拽排序、组内快速添加 UID、分块编辑/删除）、评论扫描入口、匹配结果确认与批量操作。
 
@@ -26,11 +26,12 @@ BILIBAN 是一个 Chrome 扩展（Manifest V3），用于屏蔽 B 站指定用�
 
 1. **MAIN world**（`content/interceptor.js`，`run_at: document_start`）：对 `window.fetch` 和 `XMLHttpRequest` 进行猴子补丁，在页面渲染前过滤 API 响应。运行在页面的 JS 上下文中，因此可以拦截网络请求。通过 `window.postMessage` 从内容脚本接收 UID 更新。
 
-2. **Isolated world**（`content/bilibili.js` + `lib/storage.js` + `lib/github.js`，`run_at: document_idle`）：可访问 `chrome.storage` API。处理 DOM 操作——扫描评论/视频卡片、注入屏蔽按钮、移除被屏蔽内容。通过 `postMessage({ type: 'BILIBAN_UPDATE_UIDS' })` 将 UID 变更通知给 MAIN world 拦截器。
+2. **Isolated world**（`content/bilibili.js` + `lib/storage.js` + `lib/github.js` + `content/stats-collector.js`，`run_at: document_idle`）：可访问 `chrome.storage` API。处理 DOM 操作——扫描评论/视频卡片、注入屏蔽按钮、移除被屏蔽内容、记录屏蔽时间统计。通过 `postMessage({ type: 'BILIBAN_UPDATE_UIDS' })` 将 UID 变更通知给 MAIN world 拦截器。
 
 3. **Background**（`background/service-worker.js` + `background/comment-crawler.js`，经 `importScripts` 引入）：
    - 监听 `chrome.storage` 变更，向所有 bilibili.com 标签页广播 `{ type: 'refresh' }` 消息
    - 评论扫描调度中枢：接收管理页指令（`BILIBAN_SCAN_START/STOP/STATUS/RESET`），在后台分页拉取评论区、执行黑名单匹配，将进度/结果实时推送给管理页
+   - 屏蔽统计写入队列：串行处理各标签页的 `BILIBAN_STATS_APPEND`，避免并发读改写覆盖
 
 ### 数据流向
 
@@ -56,6 +57,9 @@ Popup / 管理页 ──写入──▶ chrome.storage.local
 - `biliban_blacklist`：`{ groups: [{ id, name, enabled, uids: number[] }] }`
 - `biliban_sources`：`[{ id, owner, repo, path, branch, name }]` — 社区订阅仓库
 - `biliban_github_token` / `biliban_gist_id` — GitHub Gist 同步凭证
+- `biliban_repo_name` — 黑名单云备份仓库名（默认 `BILI-Blacklist`）
+- `biliban_block_events`：`{ version: 2, video: number[], comment: number[], meta }` — 只存屏蔽时间戳，按类型分数组
+- `biliban_advanced_settings`：`{ recordComment, recordVideo }` — 数据面板记录开关
 
 ### 评论扫描状态（`chrome.storage.session`）
 
@@ -90,10 +94,12 @@ BewlyBewly 兼容性：`getBewlyShadowRoot()` 通过多种选择器策略（包�
 
 - `background/comment-crawler.js` — 评论爬取引擎（WBI 签名、分页、节流、匹配、状态机）
 - `background/service-worker.js` — 存储变更广播 + 扫描消息路由
-- `content/interceptor.js` — API 层过滤（fetch/XHR 猴子补丁）
+- `content/interceptor.js` — API 层过滤（fetch/XHR 猴子补丁），并通过 `BILIBAN_BLOCK_EVENT` 上报过滤计数
 - `content/bilibili.js` — DOM 层过滤、按钮注入、Shadow DOM 遍历、BewlyBewly/Gate 兼容
-- `lib/storage.js` — 所有数据操作（分组、UID、订阅源、导入导出、合并、批量添加）
+- `lib/storage.js` — 所有数据操作（分组、UID、订阅源、导入导出、合并、批量添加、屏蔽统计）
 - `lib/github.js` — GitHub Gist 同步和 token 管理
 - `popup/popup.js` — 轻量弹窗 UI（云同步、订阅、导入导出）
 - `manage/manage.js` + `manage/manage.html` + `manage/manage.css` — 完整管理面板（分组/分块管理 + 评论扫描）
+- `manage/stats.js` — 数据面板（时间统计、频率曲线、按时间清理）
+- `content/stats-collector.js` — 屏蔽时间采集（video/comment 时间戳、固定批量写入）
 - `manifest.json` — 扩展清单（MV3、options_ui、权限、content script 注入配置）

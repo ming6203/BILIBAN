@@ -19,8 +19,6 @@ const modalConfirm = document.getElementById('modal-confirm');
 const githubTabs = document.querySelectorAll('.github-tab');
 const githubSyncSection = document.getElementById('github-sync-section');
 const githubUserInfo = document.getElementById('github-user-info');
-const githubPush = document.getElementById('github-push');
-const githubPull = document.getElementById('github-pull');
 const githubSyncStatus = document.getElementById('github-sync-status');
 const githubLink = document.getElementById('github-link');
 const githubLinkUrl = document.getElementById('github-link-url');
@@ -28,6 +26,7 @@ const githubLinkUrl = document.getElementById('github-link-url');
 
 // 分块相关
 const chunkList = document.getElementById('chunk-list');
+const chunkSelectAll = document.getElementById('chunk-select-all');
 const btnPushSelected = document.getElementById('btn-push-selected');
 const btnPullSelected = document.getElementById('btn-pull-selected');
 const chunkSyncStatus = document.getElementById('chunk-sync-status');
@@ -178,46 +177,17 @@ githubTabs.forEach(tab => {
 
 
 
-// 推送全部
-githubPush.addEventListener('click', async () => {
-  githubPush.disabled = true; githubSyncStatus.textContent = '推送中...';
-  githubSyncStatus.className = 'github-hint github-status-loading';
-  try {
-    const data = await BilibanStorage._load();
-    const result = await BilibanGithubSync.push(data);
-    githubSyncStatus.textContent = '✓ ' + result.message;
-    githubSyncStatus.className = 'github-hint github-status-ok';
-    githubLink.style.display = 'block'; githubLinkUrl.href = result.url;
-  } catch (e) {
-    githubSyncStatus.textContent = '✗ ' + e.message;
-    githubSyncStatus.className = 'github-hint github-status-err';
-  }
-  githubPush.disabled = false;
-});
-
-// 拉取全部
-githubPull.addEventListener('click', async () => {
-  const result = await showModal('从云端恢复', '<p>这将用云端数据<strong>覆盖</strong>本地黑名单。确定继续？</p>',
-    async () => {
-      githubPull.disabled = true;
-      try {
-        const pullResult = await BilibanGithubSync.pull();
-        await BilibanStorage._save(pullResult.data);
-        githubSyncStatus.textContent = '✓ 恢复成功';
-        githubSyncStatus.className = 'github-hint github-status-ok';
-      } catch (e) {
-        githubSyncStatus.textContent = '✗ ' + e.message;
-        githubSyncStatus.className = 'github-hint github-status-err';
-      }
-      githubPull.disabled = false;
-    });
-});
-
 // ==================== 分块同步（只读列表 + 推送/拉取） ====================
 
 async function renderChunks() {
   const chunks = await BilibanStorage.getChunks();
   const groups = await BilibanStorage.getGroups();
+
+  // 清理已被删除的分块选择，避免全选框状态与实际列表不一致
+  const chunkIds = new Set(chunks.map(c => c.id));
+  for (const id of selectedChunkIds) {
+    if (!chunkIds.has(id)) selectedChunkIds.delete(id);
+  }
 
   if (chunks.length === 0) {
     chunkList.innerHTML = '<div class="chunk-empty">暂无分块，可在完整管理面板创建</div>';
@@ -258,7 +228,33 @@ function updateChunkButtons() {
   const hasSelection = selectedChunkIds.size > 0;
   btnPushSelected.disabled = !hasSelection;
   btnPullSelected.disabled = !hasSelection;
+  updateChunkSelectAll();
 }
+
+// 全选框：全部选中时勾选，部分选中时显示半选状态
+function updateChunkSelectAll() {
+  const boxes = chunkList.querySelectorAll('.chunk-checkbox');
+  const total = boxes.length;
+  let checked = 0;
+  boxes.forEach(cb => { if (cb.checked) checked++; });
+
+  chunkSelectAll.disabled = total === 0;
+  chunkSelectAll.checked = total > 0 && checked === total;
+  chunkSelectAll.indeterminate = checked > 0 && checked < total;
+}
+
+chunkSelectAll.addEventListener('change', () => {
+  const checked = chunkSelectAll.checked;
+  chunkList.querySelectorAll('.chunk-checkbox').forEach(cb => {
+    cb.checked = checked;
+    if (checked) {
+      selectedChunkIds.add(cb.dataset.chunkId);
+    } else {
+      selectedChunkIds.delete(cb.dataset.chunkId);
+    }
+  });
+  updateChunkButtons();
+});
 
 // 推送选中的块
 btnPushSelected.addEventListener('click', async () => {
@@ -320,8 +316,13 @@ btnPullSelected.addEventListener('click', async () => {
           const pullResult = await BilibanGithubSync.pullChunk(chunk);
 
           if (pullResult.chunkId && pullResult.chunkId !== chunk.id) {
-            const adopted = await BilibanStorage.adoptChunkId(chunk.id, pullResult.chunkId);
-            if (adopted) chunk.id = pullResult.chunkId;
+            const oldId = chunk.id;
+            const adopted = await BilibanStorage.adoptChunkId(oldId, pullResult.chunkId);
+            if (adopted) {
+              chunk.id = pullResult.chunkId;
+              // 块 ID 对齐云端后，同步更新选中集合，避免刷新列表后选择丢失
+              if (selectedChunkIds.delete(oldId)) selectedChunkIds.add(chunk.id);
+            }
           }
 
           if (pullResult.chunkName && pullResult.chunkName !== chunk.name) {
@@ -523,134 +524,11 @@ async function renderSources() {
 }
 
 
-// ==================== 其他数据（聚合/事件/设置备份） ====================
-
-const otherPush = document.getElementById('other-push');
-const otherRestore = document.getElementById('other-restore');
-const otherStatus = document.getElementById('other-status');
-const otherRepoInput = document.getElementById('other-repo-input');
-const otherBrowse = document.getElementById('other-browse');
-const otherBrowseStatus = document.getElementById('other-browse-status');
-const otherFileList = document.getElementById('other-file-list');
-
-async function ensureBackupLib() {
-  if (typeof BilibanBackupSync === 'undefined') {
-    throw new Error('备份模块未加载，请刷新扩展');
-  }
-}
-
-function otherStatusText(el, text, color) {
-  el.textContent = text;
-  el.style.color = color || '';
-}
-
-if (otherPush) {
-  otherPush.addEventListener('click', async () => {
-    otherPush.disabled = true;
-    try {
-      await ensureBackupLib();
-      otherStatusText(otherStatus, '推送中...');
-      const results = await BilibanBackupSync.pushAllData();
-      const ok = results.filter(r => r.ok).length;
-      const fail = results.length - ok;
-      otherStatusText(otherStatus, '✅ 已推送 ' + ok + '/' + results.length + ' 项数据' + (fail ? '，' + fail + ' 项失败' : ''), fail ? '#ff4d4f' : '#7ecb20');
-      // 归档未归档数据（随推送自动进行）
-      try {
-        const arch = await BilibanBackupSync.archivePendingData();
-        if (arch.archived > 0) {
-          otherStatusText(otherStatus, '✅ 已推送 ' + ok + '/' + results.length + ' 项数据；归档 ' + arch.archived + ' 事件' + (arch.parts.length ? '（' + arch.parts.map(p => p.id).join(', ') + '）' : ''), fail ? '#ff4d4f' : '#7ecb20');
-          // 自动清理（保留策略，跟随限制模式；默认关闭）
-          const clean = await BilibanBackupSync.autoCleanArchived();
-          if (clean.cleaned > 0) {
-            otherStatusText(otherStatus, '✅ 已推送 ' + ok + '/' + results.length + ' 项数据；归档 ' + arch.archived + ' 事件；' + clean.message, fail ? '#ff4d4f' : '#7ecb20');
-          }
-        }
-      } catch (archErr) {
-        otherStatusText(otherStatus, '⚠️ 数据已推送，但归档失败: ' + (archErr.message || archErr), '#ffd700');
-      }
-      renderOtherFileList();
-    } catch (e) {
-      otherStatusText(otherStatus, '❌ 推送失败: ' + (e.message || e), '#ff4d4f');
-    } finally {
-      otherPush.disabled = false;
-    }
-  });
-}
-
-if (otherRestore) {
-  otherRestore.addEventListener('click', async () => {
-    if (!confirm('确定从云端恢复其他数据吗？将覆盖本地相应数据。')) return;
-    otherRestore.disabled = true;
-    try {
-      await ensureBackupLib();
-      otherStatusText(otherStatus, '恢复中...');
-      const result = await BilibanBackupSync.restoreAllData('overwrite');
-      const ok = result.restored.filter(r => r.ok).length;
-      otherStatusText(otherStatus, '✅ 已恢复 ' + ok + '/' + result.restored.length + ' 项' + (result.errors ? '，' + result.errors + ' 项失败' : ''), result.errors ? '#ff4d4f' : '#7ecb20');
-    } catch (e) {
-      otherStatusText(otherStatus, '❌ 恢复失败: ' + (e.message || e), '#ff4d4f');
-    } finally {
-      otherRestore.disabled = false;
-    }
-  });
-}
-
-if (otherBrowse) {
-  otherBrowse.addEventListener('click', async () => {
-    const ref = otherRepoInput.value.trim();
-    if (!ref) { otherStatusText(otherBrowseStatus, '请输入仓库链接', '#ff4d4f'); return; }
-    try {
-      await ensureBackupLib();
-      const parsed = BilibanBackupSync.parseRepoRef(ref);
-      if (!parsed) { otherStatusText(otherBrowseStatus, '无法识别仓库链接，支持 owner/repo 或完整 URL', '#ff4d4f'); return; }
-      otherStatusText(otherBrowseStatus, '正在获取 data/ 目录...');
-      const files = await BilibanBackupSync.listDataFilesFromRepo(parsed);
-      renderOtherFileList(files, parsed);
-      otherStatusText(otherBrowseStatus, files.length ? '找到 ' + files.length + ' 个数据文件' : '该仓库没有 data/ 目录或数据文件');
-    } catch (e) {
-      otherStatusText(otherBrowseStatus, '❌ 浏览失败: ' + (e.message || e), '#ff4d4f');
-    }
-  });
-}
-
-async function renderOtherFileList(files, repoRef) {
-  if (!otherFileList) return;
-  try {
-    if (!files) {
-      await ensureBackupLib();
-      files = await BilibanBackupSync.listDataFiles();
-    }
-    if (!files || files.length === 0) {
-      otherFileList.innerHTML = '<div class="github-hint">暂无数据文件</div>';
-      return;
-    }
-    otherFileList.innerHTML = files.map(f =>
-      '<div class="source-item">' +
-        '<span>📄 ' + f.name + '.json</span>' +
-        '<span style="color:#888;font-size:11px">' + (f.size || 0) + ' B</span>' +
-        '<button class="secondary-btn-sm other-restore-one" data-name="' + f.name + '">恢复</button>' +
-      '</div>'
-    ).join('');
-    otherFileList.querySelectorAll('.other-restore-one').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const name = btn.dataset.name;
-        try {
-          await ensureBackupLib();
-          const payload = repoRef ? await BilibanBackupSync.readDataFileFromRepo(name, repoRef) : await BilibanBackupSync.readDataFile(name);
-          if (payload == null) { otherStatusText(otherBrowseStatus, '读取失败', '#ff4d4f'); return; }
-          const df = BilibanBackupSync.DATA_FILES.find(d => d.name === name);
-          if (!df) { otherStatusText(otherBrowseStatus, '未知文件类型', '#ff4d4f'); return; }
-          await chrome.storage.local.set({ [df.key]: payload });
-          otherStatusText(otherBrowseStatus, '✅ 已恢复 ' + name + '.json');
-        } catch (e) {
-          otherStatusText(otherBrowseStatus, '❌ ' + (e.message || e), '#ff4d4f');
-        }
-      });
-    });
-  } catch (e) {
-    otherFileList.innerHTML = '<div class="github-hint">获取失败: ' + (e.message || e) + '</div>';
-  }
-}
 // ==================== 初始化 ====================
+
+// 清理已移除的数据备份/归档遗留键
+if (typeof BilibanStorage.cleanupLegacyKeys === 'function') {
+  BilibanStorage.cleanupLegacyKeys();
+}
 
 initGithubPanel();
