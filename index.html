@@ -697,6 +697,7 @@
           <div class="source-sub" id="fileSummary"></div>
         </div>
         <div class="source-actions">
+          <button id="exportPiliPlusBtn" class="btn soft" type="button" disabled>导出 PiliPlus</button>
           <button id="deleteFileBtn" class="btn danger-ghost" type="button" disabled>删除此文件</button>
           <button id="reloadRepoBtn" class="btn ghost" type="button">重新检测</button>
         </div>
@@ -821,6 +822,7 @@
     repoMeta: $('#repoMeta'),
     fileSummary: $('#fileSummary'),
     fileTabs: $('#fileTabs'),
+    exportPiliPlusBtn: $('#exportPiliPlusBtn'),
     deleteFileBtn: $('#deleteFileBtn'),
     reloadRepoBtn: $('#reloadRepoBtn'),
     groupCount: $('#groupCount'),
@@ -929,6 +931,37 @@
 
   function countUids(file) {
     return (file.data.groups || []).reduce((sum, group) => sum + (group.uids || []).length, 0);
+  }
+
+  // PiliPlus 黑名单导入格式：仅启用分组中的 UID，去重并保持首次出现顺序
+  function collectPiliPlusUids() {
+    const seen = new Set();
+    const uids = [];
+    for (const file of state.files) {
+      for (const group of (file.data.groups || [])) {
+        if (!group.enabled) continue;
+        for (const raw of (group.uids || [])) {
+          const uid = Number(raw);
+          if (!Number.isSafeInteger(uid) || uid <= 0 || seen.has(uid)) continue;
+          seen.add(uid);
+          uids.push(uid);
+        }
+      }
+    }
+    return uids;
+  }
+
+  function downloadJsonFile(filename, text) {
+    const blob = new Blob([text], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   function fileDisplayName(file) {
@@ -1409,6 +1442,7 @@
     renderFileMeta();
     updateCommitBar();
     updateFileDeleteButton();
+    updatePiliPlusButton();
   }
 
   function renderSummary() {
@@ -1658,6 +1692,17 @@
     els.deleteFileBtn.setAttribute('aria-label', reason || '删除当前黑名单文件');
   }
 
+  function updatePiliPlusButton() {
+    const count = collectPiliPlusUids().length;
+    let reason = '';
+    if (state.deleting) reason = '正在删除文件…';
+    else if (!count) reason = '没有启用分组中的 UID 可导出';
+    els.exportPiliPlusBtn.disabled = !!reason;
+    els.exportPiliPlusBtn.title = reason
+      || '导出全部启用分组中的 ' + count + ' 个 UID（去重，PiliPlus 导入格式）';
+    els.exportPiliPlusBtn.setAttribute('aria-label', reason || '导出 PiliPlus 黑名单');
+  }
+
   function updateCommitBar() {
     const dirtyFiles = state.files.filter(isDirty);
     if (!dirtyFiles.length) {
@@ -1715,6 +1760,7 @@
     renderFileMeta();
     updateCommitBar();
     updateFileDeleteButton();
+    updatePiliPlusButton();
     if (options.focusAdd) els.addUidInput.focus();
   }
 
@@ -1783,6 +1829,21 @@
     els.uidFilter.value = '';
     afterEdit();
     toast('分组已删除');
+  }
+
+  function exportPiliPlus() {
+    if (state.deleting || state.busy) return;
+
+    const uids = collectPiliPlusUids();
+    if (!uids.length) {
+      toast('没有启用分组中的 UID 可导出', 'warn');
+      return;
+    }
+
+    const json = JSON.stringify(uids, null, 4) + '\n';
+    const date = new Date().toISOString().slice(0, 10);
+    downloadJsonFile('biliban_piliplus_' + date + '.json', json);
+    toast('已导出 ' + uids.length + ' 个 UID（PiliPlus）');
   }
 
   async function deleteActiveFile() {
@@ -2055,6 +2116,7 @@
 
   els.loadBtn.addEventListener('click', loadFromRepo);
   els.reloadRepoBtn.addEventListener('click', loadFromRepo);
+  els.exportPiliPlusBtn.addEventListener('click', exportPiliPlus);
   els.deleteFileBtn.addEventListener('click', deleteActiveFile);
   els.discardBtn.addEventListener('click', loadFromRepo);
   els.commitBtn.addEventListener('click', commitAll);
