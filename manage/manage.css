@@ -302,6 +302,38 @@ body {
 }
 .batch-hint { font-size: 12px; color: #52c41a; margin-left: 6px; }
 
+/* ==================== 评论分析 ==================== */
+.scan-analysis-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px;
+}
+.scan-analysis {
+  margin-bottom: 12px; padding: 12px;
+  background: #2f2f2f; border: 1px solid #4a4a4a; border-radius: 8px;
+}
+.analysis-head { margin-bottom: 10px; }
+.analysis-title { font-size: 14px; font-weight: 600; color: #e0e0e0; }
+.analysis-meta { font-size: 12px; color: #999; margin-top: 4px; line-height: 1.5; }
+.analysis-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px;
+}
+.analysis-card { background: #383838; border-radius: 8px; padding: 10px; }
+.analysis-card-title {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 13px; font-weight: 600; color: #e0e0e0; margin-bottom: 8px;
+}
+.analysis-card-title span { color: #888; font-size: 11px; font-weight: 400; }
+.analysis-list { display: flex; flex-direction: column; gap: 8px; }
+.analysis-item { min-width: 0; }
+.analysis-item-head {
+  display: flex; align-items: center; gap: 6px; font-size: 12px; color: #ccc;
+}
+.analysis-rank { min-width: 18px; color: #fb7299; font-weight: 600; }
+.analysis-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.analysis-count { color: #999; white-space: nowrap; }
+.analysis-bar { height: 4px; background: #2a2a2a; border-radius: 2px; margin-top: 4px; overflow: hidden; }
+.analysis-bar span { display: block; height: 100%; background: #fb7299; border-radius: 2px; }
+.analysis-empty { padding: 12px; text-align: center; color: #888; font-size: 12px; }
+
 .result-list { max-height: calc(100vh - 300px); min-height: 200px; overflow-y: auto; border: 1px solid #4a4a4a; border-radius: 8px; }
 .result-list::-webkit-scrollbar { width: 6px; }
 .result-list::-webkit-scrollbar-thumb { background: #555; border-radius: 3px; }

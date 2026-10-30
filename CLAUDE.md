@@ -63,7 +63,8 @@ Popup / 管理页 ──写入──▶ chrome.storage.local
 
 ### 评论扫描状态（`chrome.storage.session`）
 
-- `biliban_scan`：`{ status, video, options, progress, results: [{ uid, uname, avatar, sample, commentCount, ctime, matched, groups }], threads: [{ rpid, uid, uname, avatar, content, ctime, replies: [{ rpid, uid, uname, content, ctime }] }], matchedCount, error, note }`
+- `biliban_scan`：`{ status, video, options, progress, results: [{ uid, uname, avatar, sample, commentCount, ctime, matched, groups }], threads: [{ rpid, uid, uname, avatar, content, ctime, replies: [{ rpid, uid, uname, content, ctime }] }], analysis: { main, all }, matchedCount, error, note }`
+- `analysis`：`{ main: { total, users, ips, levels }, all: {...} }`，`main` 仅主楼，`all` 含楼中楼；`users` 按 uid 聚合发送数，`ips` 按 IP 属地聚合，`levels` 按等级（0-6 / unknown）聚合
 - `status` 取值：`running | done | stopped | error`；SW 被休眠唤醒时若发现残留 `running` 状态会自动标记为 `stopped`（`Crawler.recoverInterrupted()`）
 - `results` 按 UID 去重（上限 3000 位用户），供批量操作；`threads` 按评论线程保存（上限 600 条主楼、每楼最多 15 条回复），供管理页"评论区复原"视图展示
 - `maxPages = 0` 表示全量模式：不限页数，持续拉取直到接口返回 `is_end`（上限 500 页防御性保护）
@@ -99,7 +100,7 @@ BewlyBewly 兼容性：`getBewlyShadowRoot()` 通过多种选择器策略（包�
 - `lib/storage.js` — 所有数据操作（分组、UID、订阅源、导入导出、合并、批量添加、屏蔽统计）
 - `lib/github.js` — GitHub Gist 同步和 token 管理
 - `popup/popup.js` — 轻量弹窗 UI（云同步、订阅、导入导出）
-- `manage/manage.js` + `manage/manage.html` + `manage/manage.css` — 完整管理面板（分组/分块管理 + 评论扫描）
+- `manage/manage.js` + `manage/manage.html` + `manage/manage.css` — 完整管理面板（分组/分块管理 + 评论扫描/分析）
 - `manage/stats.js` — 数据面板（时间统计、频率曲线、按时间清理）
 - `content/stats-collector.js` — 屏蔽时间采集（video/comment 时间戳、固定批量写入）
 - `manifest.json` — 扩展清单（MV3、options_ui、权限、content script 注入配置）

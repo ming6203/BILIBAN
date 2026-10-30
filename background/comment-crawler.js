@@ -462,6 +462,63 @@ const Crawler = {
     }
   },
 
+  // ==================== 评论分析聚合 ====================
+
+  createAnalysisBucket() {
+    return { total: 0, users: {}, ips: {}, levels: {} };
+  },
+
+  getReplyLevel(reply) {
+    const member = (reply && reply.member) || {};
+    let level = member.level_info && member.level_info.current_level;
+    if (level == null) level = member.level;
+    const n = Number(level);
+    return Number.isFinite(n) ? n : null;
+  },
+
+  getReplyIp(reply) {
+    const raw = (reply && reply.reply_control && reply.reply_control.location)
+      || (reply && reply.ip_location)
+      || (reply && reply.member && reply.member.location)
+      || '';
+    const text = String(raw).replace(/^IP属地\s*[:：]?\s*/, '').trim();
+    return text || '未知';
+  },
+
+  // 聚合一条评论：发送人、IP、等级；不保存评论明细
+  addAnalysisComment(bucket, reply) {
+    if (!bucket || !reply) return;
+    const member = (reply.member) || {};
+    const uid = Number(member.mid || reply.mid);
+    const uname = member.uname || '';
+    const level = this.getReplyLevel(reply);
+    const ip = this.getReplyIp(reply);
+
+    bucket.total++;
+    if (uid && !isNaN(uid)) {
+      const key = String(uid);
+      if (!bucket.users[key]) {
+        bucket.users[key] = { uid: uid, uname: uname, count: 0 };
+      }
+      bucket.users[key].count++;
+      if (uname) bucket.users[key].uname = uname;
+    }
+    bucket.ips[ip] = (bucket.ips[ip] || 0) + 1;
+    const levelKey = level == null ? 'unknown' : String(level);
+    bucket.levels[levelKey] = (bucket.levels[levelKey] || 0) + 1;
+  },
+
+  // 楼中楼按 rpid 去重（内嵌回复与展开结果可能重复）
+  addAnalysisReply(bucket, reply, seen) {
+    if (!bucket || !reply) return;
+    const rpid = Number(reply.rpid);
+    if (rpid) {
+      if (seen.has(rpid)) return;
+      seen.add(rpid);
+    }
+    this.addAnalysisComment(bucket, reply);
+  },
+
   /**
    * 将一个主评论加入线程列表（threads），用于管理页复原评论区展示
    * 接口随主列表免费附带的内嵌楼中楼（<=3 条）会一并写入
@@ -541,6 +598,10 @@ const Crawler = {
       progress: { pages: 0, comments: 0, next: null, isEnd: false },
       results: [],                  // 按用户去重聚合（批量操作）
       threads: [],                  // 评论线程（评论区复原展示，含楼中楼）
+      analysis: {                   // 评论分析聚合：main=仅主楼，all=主楼+楼中楼
+        main: this.createAnalysisBucket(),
+        all: this.createAnalysisBucket()
+      },
       matchedCount: 0,
       truncated: false,
       error: null,
@@ -573,6 +634,7 @@ const Crawler = {
 
       const users = new Map();
       const threadIndex = new Map(); // rpid -> thread，用于把展开的楼中楼挂回主楼
+      const seenAnalysisReplies = new Set(); // 分析用：楼中楼 rpid 去重
       const blacklistMap = await this.loadBlacklistMap();
       let next = null;
       let pagesFetched = 0;
@@ -584,8 +646,8 @@ const Crawler = {
         // 时间范围过滤：ctime 需落在 [timeTo, timeFrom] 区间（timeFrom 较新 / timeTo 较旧）
         let hitTimeLimit = false;
         if (timeFrom != null || timeTo != null) {
-          const before = page.replies.length;
-          if (before > 0) {
+          const before = page.replies;
+          if (before.length > 0) {
             const pageMax = Math.max(...before.map(r => r.ctime || 0));
             page.replies = before.filter(r => {
               const c = r.ctime || 0;
@@ -593,7 +655,7 @@ const Crawler = {
               if (timeTo != null && c < timeTo) return false;     // 早于终止
               return true;
             });
-            // 最新排序逐页变早：整页最早评论已早于终止边界，后续更早不再命中区间 → 停止
+            // 最新排序逐页变早：整页评论都早于终止边界，后续更早不再命中区间 → 停止
             if (timeTo != null && pageMax < timeTo) hitTimeLimit = true;
           }
         }
@@ -601,6 +663,12 @@ const Crawler = {
         for (const reply of page.replies) {
           this.addCommentUser(users, reply, blacklistMap);
           this.addThread(state.threads, threadIndex, reply);
+          this.addAnalysisComment(state.analysis.main, reply);
+          this.addAnalysisComment(state.analysis.all, reply);
+          // 主列表内嵌的楼中楼也计入 all（是否展示由前端“分析楼中楼”开关决定）
+          for (const sub of (reply.replies || [])) {
+            this.addAnalysisReply(state.analysis.all, sub, seenAnalysisReplies);
+          }
         }
 
         // 可选：展开楼中楼（内嵌的 <=3 条已随主列表写入线程，此处补全剩余回复）
@@ -616,6 +684,7 @@ const Crawler = {
               for (const sub of subs) {
                 this.addCommentUser(users, sub, blacklistMap);
                 if (rootThread) this.addThreadReply(rootThread, sub);
+                this.addAnalysisReply(state.analysis.all, sub, seenAnalysisReplies);
               }
             } catch (e) {
               if (e && e.risk) throw e; // 风控立即终止

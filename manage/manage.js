@@ -61,6 +61,10 @@ const scanBatchHint = document.getElementById('scan-batch-hint');
 const scanResultList = document.getElementById('scan-result-list');
 const scanSearchInput = document.getElementById('scan-search-input');
 const scanSearchCount = document.getElementById('scan-search-count');
+const scanAnalyze = document.getElementById('scan-analyze');
+const scanAnalyzeSub = document.getElementById('scan-analyze-sub');
+const scanAnalyzeHint = document.getElementById('scan-analyze-hint');
+const scanAnalysis = document.getElementById('scan-analysis');
 
 // ==================== 状态 ====================
 let draggedCard = null;
@@ -72,6 +76,8 @@ const scanViewState = {
   ignored: new Set(),      // 本次扫描中被忽略的 uid（内存态）
   added: new Set(),        // 已加入黑名单的 uid（内存态，用于徽标）
   results: [],             // 最新一份结果
+  threads: [],             // 评论线程（主楼 + 楼中楼）
+  analysis: null,          // 扫描期间聚合的分析数据（main / all）
   status: 'idle'           // idle | running | done | stopped | error
 };
 
@@ -681,6 +687,7 @@ async function addScanToCache(state) {
       video: { bvid: v.bvid, aid: v.aid, title: v.title || '', ownerName: v.ownerName || '', url: v.url || '' },
       results: state.results || [],
       threads: state.threads || [],
+      analysis: state.analysis || null,
       comments: comments,
       mode: state.mode,
       timeRangeText: state.timeRangeText || '',
@@ -732,10 +739,17 @@ async function loadCacheEntry(id) {
   if (!entry) { showToast('缓存不存在'); return; }
   scanViewState.results = entry.results || [];
   scanViewState.threads = entry.threads || [];
+  scanViewState.analysis = entry.analysis || null;
   scanViewState.selected.clear();
   scanViewState.ignored.clear();
   scanViewState.added.clear();
   scanViewState.status = 'done';
+  if (scanAnalyzeSub) scanAnalyzeSub.checked = false;
+  if (scanAnalysis) {
+    scanAnalysis.style.display = 'none';
+    scanAnalysis.innerHTML = '';
+  }
+  if (scanAnalyzeHint) scanAnalyzeHint.textContent = '默认只分析主楼评论';
   if (scanViewState.results.length > 0 || scanViewState.threads.length > 0) scanResults.style.display = 'block';
   scanProgress.style.display = 'block';
   scanVideoInfo.innerHTML = '<div class="video-title">' + escapeHtml(entry.video.title || '未命名视频') + '</div>' +
@@ -941,6 +955,13 @@ scanStart.addEventListener('click', async () => {
   scanViewState.selected.clear();
   scanViewState.ignored.clear();
   scanViewState.added.clear();
+  scanViewState.analysis = null;
+  if (scanAnalyzeSub) scanAnalyzeSub.checked = false;
+  if (scanAnalysis) {
+    scanAnalysis.style.display = 'none';
+    scanAnalysis.innerHTML = '';
+  }
+  if (scanAnalyzeHint) scanAnalyzeHint.textContent = '默认只分析主楼评论';
 
   const resp = await sendToBackground({ type: 'BILIBAN_SCAN_START', videoRef: input, options });
 
@@ -981,6 +1002,7 @@ function applyScanState(state) {
   scanViewState.status = state.status;
   scanViewState.results = state.results || [];
   scanViewState.threads = state.threads || [];
+  scanViewState.analysis = state.analysis || null;
 
   const running = state.status === 'running';
   scanStart.disabled = running;
@@ -1045,6 +1067,7 @@ function applyScanState(state) {
   if (scanViewState.results.length > 0 || scanViewState.threads.length > 0) {
     scanResults.style.display = 'block';
     renderScanResults();
+    if (scanAnalysis && scanAnalysis.style.display !== 'none') renderScanAnalysis();
   }
 
   // 完成/停止时自动写入缓存（同视频覆盖 + LRU），供后续加载复用
@@ -1122,6 +1145,141 @@ function computeRowHit(comment, keywords) {
 function computeSearchHit(thread, keywords) {
   if (!keywords || keywords.length === 0) return true;
   return [thread, ...(thread.replies || [])].some(r => computeRowHit(r, keywords));
+}
+
+// ==================== 评论分析 ====================
+
+function formatCount(n) {
+  return Number(n || 0).toLocaleString('zh-CN');
+}
+
+function analysisPct(count, total) {
+  if (!total) return 0;
+  return Math.round((count / total) * 1000) / 10;
+}
+
+function renderScanAnalysis() {
+  if (!scanAnalysis) return;
+  scanAnalysis.style.display = 'block';
+
+  const analysis = scanViewState.analysis;
+  const includeSub = !!(scanAnalyzeSub && scanAnalyzeSub.checked);
+  if (!analysis || !analysis.main || !analysis.all) {
+    scanAnalysis.innerHTML = '<div class="analysis-empty">当前扫描没有分析数据，请重新扫描一次。</div>';
+    if (scanAnalyzeHint) scanAnalyzeHint.textContent = '分析数据缺失，请重新扫描';
+    return;
+  }
+
+  const main = analysis.main || {};
+  const all = analysis.all || {};
+  const bucket = includeSub ? all : main;
+  const total = Number(bucket.total) || 0;
+  const mainTotal = Number(main.total) || 0;
+  const allTotal = Number(all.total) || 0;
+
+  if (total === 0) {
+    scanAnalysis.innerHTML = '<div class="analysis-empty">暂无可分析的评论。</div>';
+    if (scanAnalyzeHint) scanAnalyzeHint.textContent = '暂无可分析的评论';
+    return;
+  }
+
+  const users = Object.values(bucket.users || {})
+    .map(u => ({ uid: Number(u.uid) || 0, uname: u.uname || '', count: Number(u.count) || 0 }))
+    .sort((a, b) => b.count - a.count || a.uid - b.uid);
+  const ips = Object.keys(bucket.ips || {})
+    .map(ip => ({ ip: ip, count: Number(bucket.ips[ip]) || 0 }))
+    .sort((a, b) => b.count - a.count || a.ip.localeCompare(b.ip, 'zh-CN'));
+  const levelMap = bucket.levels || {};
+  const levels = [];
+  for (let i = 0; i <= 6; i++) {
+    levels.push({ label: 'Lv' + i, count: Number(levelMap[i]) || 0 });
+  }
+  levels.push({ label: '未知', count: Number(levelMap.unknown) || 0 });
+
+  const replyCount = Math.max(0, allTotal - mainTotal);
+  const modeText = includeSub
+    ? '主楼 ' + formatCount(mainTotal) + ' + 楼中楼 ' + formatCount(replyCount)
+    : '仅主楼 ' + formatCount(mainTotal);
+
+  const maxUser = users.length ? Math.max(1, users[0].count) : 1;
+  const maxIp = ips.length ? Math.max(1, ips[0].count) : 1;
+  const topUser = users[0];
+  const topIp = ips[0];
+  const topLevel = levels.reduce((best, cur) => cur.count > best.count ? cur : best, levels[0]);
+
+  const userRows = users.slice(0, 10).map((u, i) => {
+    const name = u.uname || ('UID ' + u.uid);
+    const width = Math.round((u.count / maxUser) * 100);
+    return '<div class="analysis-item">' +
+      '<div class="analysis-item-head">' +
+        '<span class="analysis-rank">' + (i + 1) + '</span>' +
+        '<span class="analysis-name" title="UID ' + u.uid + '">' + escapeHtml(name) + '</span>' +
+        '<span class="analysis-count">' + formatCount(u.count) + '</span>' +
+      '</div>' +
+      '<div class="analysis-bar"><span style="width:' + width + '%"></span></div>' +
+      '</div>';
+  }).join('');
+
+  const ipRows = ips.slice(0, 10).map((x, i) => {
+    const width = Math.round((x.count / maxIp) * 100);
+    return '<div class="analysis-item">' +
+      '<div class="analysis-item-head">' +
+        '<span class="analysis-rank">' + (i + 1) + '</span>' +
+        '<span class="analysis-name">' + escapeHtml(x.ip) + '</span>' +
+        '<span class="analysis-count">' + formatCount(x.count) + '</span>' +
+      '</div>' +
+      '<div class="analysis-bar"><span style="width:' + width + '%"></span></div>' +
+      '</div>';
+  }).join('');
+
+  const levelRows = levels.map(x => {
+    const pct = analysisPct(x.count, total);
+    return '<div class="analysis-item">' +
+      '<div class="analysis-item-head">' +
+        '<span class="analysis-name">' + x.label + '</span>' +
+        '<span class="analysis-count">' + formatCount(x.count) + ' · ' + pct + '%</span>' +
+      '</div>' +
+      '<div class="analysis-bar"><span style="width:' + pct + '%"></span></div>' +
+      '</div>';
+  }).join('');
+
+  scanAnalysis.innerHTML =
+    '<div class="analysis-head">' +
+      '<div class="analysis-title">📊 评论分析结果</div>' +
+      '<div class="analysis-meta">分析 ' + formatCount(total) + ' 条评论（' + modeText + '）</div>' +
+      '<div class="analysis-meta">' +
+        '发送最多：' + (topUser ? escapeHtml(topUser.uname || ('UID ' + topUser.uid)) + '（' + formatCount(topUser.count) + ' 条）' : '无') +
+        ' · IP 最多：' + (topIp ? escapeHtml(topIp.ip) + '（' + formatCount(topIp.count) + ' 条）' : '无') +
+        ' · 等级最多：' + topLevel.label + '（' + formatCount(topLevel.count) + ' 条）' +
+      '</div>' +
+    '</div>' +
+    '<div class="analysis-grid">' +
+      '<div class="analysis-card">' +
+        '<div class="analysis-card-title">👤 发送人 Top 10 <span>' + formatCount(users.length) + ' 位</span></div>' +
+        '<div class="analysis-list">' + (userRows || '<div class="analysis-empty">无发送人数据</div>') + '</div>' +
+      '</div>' +
+      '<div class="analysis-card">' +
+        '<div class="analysis-card-title">🌐 IP 归属地 Top 10 <span>' + formatCount(ips.length) + ' 个</span></div>' +
+        '<div class="analysis-list">' + (ipRows || '<div class="analysis-empty">无 IP 数据</div>') + '</div>' +
+      '</div>' +
+      '<div class="analysis-card">' +
+        '<div class="analysis-card-title">🎚️ 等级分布</div>' +
+        '<div class="analysis-list">' + levelRows + '</div>' +
+      '</div>' +
+    '</div>';
+
+  if (scanAnalyzeHint) {
+    scanAnalyzeHint.textContent = includeSub
+      ? '已包含楼中楼：主楼 ' + formatCount(mainTotal) + ' + 回复 ' + formatCount(replyCount)
+      : '仅统计主楼；勾选「分析楼中楼」可包含回复';
+  }
+}
+
+if (scanAnalyze) scanAnalyze.addEventListener('click', renderScanAnalysis);
+if (scanAnalyzeSub) {
+  scanAnalyzeSub.addEventListener('change', () => {
+    if (scanAnalysis && scanAnalysis.style.display !== 'none') renderScanAnalysis();
+  });
 }
 
 async function renderScanResults() {

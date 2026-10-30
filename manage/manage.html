@@ -189,6 +189,14 @@
             <input type="checkbox" id="scan-select-all"> 全选
           </label>
         </div>
+        <div class="scan-analysis-bar">
+          <button id="scan-analyze" class="secondary-btn-sm">📊 分析</button>
+          <label class="checkbox-item">
+            <input type="checkbox" id="scan-analyze-sub"> 分析楼中楼
+          </label>
+          <span class="scan-hint" id="scan-analyze-hint">默认只分析主楼评论</span>
+        </div>
+        <div class="scan-analysis" id="scan-analysis" style="display:none"></div>
         <div class="batch-bar" id="scan-batch-bar">
           <span>批量操作：</span>
           <select id="scan-batch-group" class="small-select"></select>
